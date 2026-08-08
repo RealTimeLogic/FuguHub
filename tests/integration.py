@@ -1708,7 +1708,12 @@ def test_command_line_bootstrap() -> None:
     runtime = fresh_runtime("command-line-bootstrap")
     token = "command-line-bootstrap-token-0123456789"
     password = "bootstrap:password"
-    args = ("-credentials", f"bootstrap:{password}", "-token", token)
+    args = (
+        "-credentials", f"bootstrap:{password}",
+        "-credentials", "ignored:ignored-password",
+        "-token", token,
+        "-token", "short",
+    )
 
     with MakoProcess(runtime, extra_args=args) as server:
         browser = Browser(server.origin)
@@ -1759,25 +1764,6 @@ def test_command_line_bootstrap() -> None:
         check(any("bootstrap ignored" in line for line in server.lines),
               "ignored command-line bootstrap was not traced")
 
-    file_runtime = fresh_runtime("command-line-bootstrap-files")
-    credentials_file = file_runtime / "bootstrap-credentials.txt"
-    token_file = file_runtime / "bootstrap-token.txt"
-    credentials_file.write_text("fileadmin:file-password\n", encoding="utf-8")
-    file_token = "file-bootstrap-token-0123456789"
-    token_file.write_text(file_token + "\n", encoding="utf-8")
-    file_args = (
-        "-credentials-file", str(credentials_file),
-        "-token-file", str(token_file),
-    )
-    with MakoProcess(file_runtime, extra_args=file_args) as server:
-        browser = Browser(server.origin)
-        code, _, dashboard = form_login(
-            browser, server.base + "admin/", "fileadmin", "file-password"
-        )
-        check(code == 200 and b"Dashboard" in dashboard,
-              "file-based bootstrap administrator could not log in")
-        McpClient(Browser(server.origin), server.base + "mcp/", file_token).initialize()
-
     invalid_runtime = fresh_runtime("command-line-bootstrap-invalid")
     invalid_args = ("-credentials", "invalid:password", "-token", "short")
     with MakoProcess(invalid_runtime, extra_args=invalid_args) as server:
@@ -1787,6 +1773,21 @@ def test_command_line_bootstrap() -> None:
     with contextlib.closing(sqlite3.connect(database_path(invalid_runtime))) as conn:
         check(conn.execute("SELECT count(*) FROM identity_profiles").fetchone()[0] == 0,
               "invalid bootstrap token created a partial administrator")
+
+    invalid_cases = (
+        ("token-only", ("-token", token), b"requires -credentials"),
+        ("malformed", ("-credentials", "invalid"), b"username:password"),
+        ("missing-value", ("-credentials",), b"requires a value"),
+    )
+    for label, invalid_args, expected in invalid_cases:
+        case_runtime = fresh_runtime("command-line-bootstrap-" + label)
+        with MakoProcess(case_runtime, extra_args=invalid_args) as server:
+            code, _, body = Browser(server.origin).request("/")
+            check(code == 503 and expected in body,
+                  f"{label} bootstrap did not fail safely: {code}, {body[:500]!r}")
+        with contextlib.closing(sqlite3.connect(database_path(case_runtime))) as conn:
+            check(conn.execute("SELECT count(*) FROM identity_profiles").fetchone()[0] == 0,
+                  f"{label} bootstrap created a partial administrator")
 
 
 def run_admin_api_reauthentication_case(mount: str) -> None:

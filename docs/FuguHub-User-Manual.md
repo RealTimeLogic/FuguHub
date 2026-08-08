@@ -105,18 +105,8 @@ After the first user is created, later command-line bootstrap values are
 ignored and cannot replace the administrator or MCP token.
 
 Command-line secrets can appear in shell history and operating-system process
-listings. For unattended deployment, put each value in a protected one-line
-file instead:
-
-```bat
-mako -credentials-file C:\secrets\fuguhub-credentials.txt ^
-     -token-file C:\secrets\fuguhub-token.txt
-```
-
-The credentials file contains `username:password`; the token file contains
-only the MCP token. Use absolute paths and restrict the files to the account
-that runs Mako. Do not combine `-credentials` with `-credentials-file`, or
-`-token` with `-token-file`.
+listings. Use these options only for the first startup, restrict access to the
+host, and remove them from the startup command afterward.
 
 With `CmsDomains`, the control domain starts first and consumes the bootstrap
 credentials. Its CMS database also receives the MCP token. Consumer domains

@@ -34,9 +34,8 @@ from the command line:
 mako -l::cms -credentials admin:choose-a-strong-password -token choose-a-long-random-token
 ```
 
-Use the protected `-credentials-file` and `-token-file` alternatives for
-unattended deployment so secrets do not appear in shell history or process
-listings.
+Command-line secrets may appear in shell history and process listings. Use
+these options only for the first startup and restrict access to the host.
 
 ## Build Deployments
 
