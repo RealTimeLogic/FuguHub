@@ -1,0 +1,24 @@
+local schema = pluginreq "schema"
+local serviceModule = pluginreq "service"
+local admin = pluginreq "admin"
+local web = pluginreq "web"
+
+return {
+   id = "large-file-mailer",
+   requires = { "identity-access", "file-services" },
+
+   start = function(ctx)
+      local identity = ctx:requirePlugin("identity-access")
+      local files = ctx:requirePlugin("file-services")
+      schema.ensure(ctx, identity)
+      local service = serviceModule.start(
+         ctx, identity, files, app)
+      admin.install(ctx, service, app)
+      web.install(ctx, service, identity, files, app)
+      return service
+   end,
+
+   stop = function()
+      serviceModule.stop()
+   end
+}

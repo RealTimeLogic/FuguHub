@@ -1,0 +1,392 @@
+local app = app or {}
+app.engineIo = app.engineIo or io
+app.io = app.engineIo
+app.appDir = dir
+app.rootPath = "."
+app.defaultTheme = "default"
+app.dbName = app.dbName or "cms"
+app.assetsDirName = app.assetsDirName or "assets"
+app.assetsZipName = app.assetsZipName or "assets.zip"
+app.dirPrio = app.dirPrio or 0
+
+trace("STARTING",app.dbName)
+
+local rootIo = ba.openio("home") or io
+app.homeIo = rootIo
+
+if not app.wfsConfig then
+   local config = require "loadconf" or {}
+   app.wfsConfig = config.wfs
+end
+app.wfsConfig = app.wfsConfig or {
+   io = "home",
+   path = "/",
+   baseurl = "/fs/",
+   lockdir = ".locks"
+}
+
+if not package.loaded["fastmcp.engine"] then
+   local pathio = require "pathio"
+   local libraryIo = pathio(io, "lib")
+   mako.createloader(libraryIo)
+end
+
+if not rootIo:stat("themes") then
+   local ok, err = rootIo:mkdir("themes")
+   if not ok then
+      error("Cannot create themes directory: " .. tostring(err))
+   end
+end
+app.themesIo = assert(ba.mkio(rootIo, "themes"))
+
+local assetsIo
+if rootIo:stat(app.assetsZipName) then
+   assetsIo = assert(ba.mkio(rootIo, app.assetsZipName))
+   app.assetsSource = "zip"
+else
+   assert(rootIo:stat(app.assetsDirName) or rootIo:mkdir(app.assetsDirName))
+   assetsIo = assert(ba.mkio(rootIo, app.assetsDirName))
+   app.assetsSource = "directory"
+end
+local assetsDir = assert(ba.create.resrdr(app.dirPrio, assetsIo))
+assetsDir:header{
+   ["x-content-type-options"] = "nosniff"
+}
+app.assetsIo = assetsIo
+app.publicDir = assetsDir
+
+local function assetsErrh(message)
+   return debug and debug.traceback and debug.traceback(message, 2) or message
+end
+
+local function loadAssetModule(modules, loaded, env, name)
+   if loaded[name] then
+      return modules[name]
+   end
+
+   local path = string.format(".lua/%s.lua", name:gsub("%.", "/"))
+   if not env.io:stat(path) then
+      error(string.format("%s not found", name), 3)
+   end
+
+   local fn, err = env.io:loadfile(path, env)
+   if fn then
+      local ok
+      ok, err = xpcall(fn, assetsErrh)
+      if ok then
+         modules[name] = err == nil and true or err
+         loaded[name] = true
+         return modules[name]
+      end
+   end
+   error(string.format("%s failed: %s", name, err or "?"), 3)
+end
+
+local function runAssetsPreload(app, parentEnv)
+   if not app.assetsIo:stat(".preload") then
+      return true
+   end
+
+   local assetEnv = {
+      io = app.assetsIo,
+      dir = app.publicDir,
+      homeIo = app.homeIo,
+   }
+   assetEnv.app = assetEnv
+   setmetatable(assetEnv, {
+      __index = function(_, key)
+         local value = app[key]
+         if value ~= nil then
+            return value
+         end
+         return parentEnv[key]
+      end
+   })
+
+   local modules, loaded = {}, {}
+   function assetEnv.assetsreq(name)
+      return loadAssetModule(modules, loaded, assetEnv, name)
+   end
+
+   local fn, err = app.assetsIo:loadfile(".preload", assetEnv)
+   if not fn then
+      trace("assets/.preload load failed:", tostring(err))
+      return nil, tostring(err)
+   end
+
+   if app.smq then app.smq:_beginOwner(assetEnv) end
+   local ok, result = xpcall(fn, function(e)
+      return debug.traceback(e, 2)
+   end)
+   if app.smq then app.smq:_endOwner(assetEnv) end
+
+   if not ok then
+      if app.smq then app.smq:_removeOwner(assetEnv) end
+      trace("assets/.preload failed: ", tostring(result))
+      return nil, tostring(result)
+   end
+
+   app.assetsApp = assetEnv
+   return true
+end
+
+local function execAssetsOnunload(app)
+   local assetEnv = app.assetsApp
+   app.assetsApp = nil
+   if not assetEnv then
+      return true
+   end
+
+   local unloadOk = true
+   local unloadError
+   local fn = rawget(assetEnv, "onunload")
+   if type(fn) == "function" then
+      local ok, err = pcall(fn)
+      if not ok then
+         unloadOk = false
+         unloadError = "Stopping assets application failed: " .. tostring(err or "?")
+         trace(unloadError)
+      end
+   end
+   if app.smq then app.smq:_removeOwner(assetEnv) end
+   return unloadOk, unloadError
+end
+
+local cmsEnv = _ENV
+function app.restartAssetsApplication()
+   local unloadOk, unloadError = execAssetsOnunload(app)
+   local loadOk, loadError = runAssetsPreload(app, cmsEnv)
+   local smqOk, smqError = true
+   if app.smq and app.smq:isEnabled() then
+      smqOk, smqError = app.smq:restart()
+   end
+
+   assetsDir:lspfilter(app.assetsApp or app)
+   if app.invalidateRuntime then
+      app.invalidateRuntime()
+   end
+
+   local result = {
+      ok = loadOk == true and smqOk == true,
+      unloaded = unloadOk == true,
+      loaded = app.assetsApp ~= nil,
+      active = app.assetsApp ~= nil,
+      preloadExists = app.assetsIo:stat(".preload") ~= nil
+   }
+   if unloadError then
+      result.unloadError = unloadError
+   end
+   if loadError then
+      result.loadError = loadError
+   end
+   if smqError then
+      result.smqError = smqError
+   end
+   return result
+end
+
+local sqlutil = require "sqlutil"
+if not app.homeIo:stat("data") then
+   local ok, err = app.homeIo:mkdir("data")
+   if not ok then
+      error("Cannot create data directory: " .. tostring(err))
+   end
+end
+sqlutil.dir(app.homeIo:realpath("data"))
+app.dataIo = assert(ba.mkio(app.homeIo, "data"))
+local dbExists = sqlutil.exist(app.dbName)
+
+local runtime = appreq "runtime"
+local db = appreq "db"
+local schema = appreq "schema"
+local identityschema = appreq "identityschema"
+local identitystore = appreq "identitystore"
+local identityservice = appreq "identity"
+local terms = appreq "terms"
+local settings = appreq "settings"
+local mcpconfig = appreq "mcpconfig"
+local bootstrap = appreq "bootstrap"
+local mcpserver = appreq "mcpserver"
+local adminauth = appreq "adminauth"
+local admin = appreq "admin"
+local notfound = appreq "notfound"
+local smqservice = appreq "smqservice"
+local router = appreq "router"
+local theme = appreq "theme"
+local startup = appreq "startup"
+local pluginManager
+
+app.runtimeTrace = appreq("runtimetrace").create(10 * 1024)
+local traceDir = ba.create.tracelogger()
+traceDir:ontrace(function(message)
+   local data = tostring(message):gsub("\r\n", "\n"):gsub("\r", "\n")
+   app.runtimeTrace.record(data)
+   if app.mcp and app.mcp.transport then
+      app.mcp.transport:notifyAll("notifications/message", {
+         level = "info",
+         logger = "trace",
+         data = data
+      })
+   end
+end)
+
+runtime.install(app)
+app.db = db.configure(app)
+terms.install(app)
+local function startupTraceback(err)
+   return debug.traceback(err, 2)
+end
+
+local function fatalStartup(message, detail, action)
+   startup.fatal(app, {
+      title = "CMS startup failed",
+      message = message,
+      detail = detail,
+      action = action
+   })
+   startup.installFatalDir(app)
+end
+
+local function startupStep(label, fn, message, action)
+   local ok, err = xpcall(fn, startupTraceback)
+   if ok then
+      return true
+   end
+   fatalStartup(message or ("Startup step failed: " .. tostring(label)), tostring(err), action)
+   return false
+end
+
+local normalStartup = startupStep(
+   "database ownership",
+   function()
+      app.db.acquireWriteOwner()
+   end,
+   "The CMS SQLite database is already in use by another FuguHub instance, or it cannot be opened for writing.",
+   "Stop the other Mako process that is using this runtime data directory, or start this CMS with a separate data directory/database."
+)
+
+if normalStartup then
+   normalStartup = startupStep("extensions", function()
+      -- Keep makocmsExtensions as a legacy compatibility hook. New code should
+      -- use cmsExtensions or the plugin API.
+      local extensions = rawget(_G, "cmsExtensions") or rawget(_G, "makocmsExtensions")
+      if extensions then
+         for _, configure in ipairs(extensions) do
+            configure(app)
+         end
+      end
+   end)
+end
+
+if normalStartup then
+   normalStartup = startupStep("schema", function()
+       if (not dbExists) or schema.missingRequired(app) or
+          schema.contentPathMigrationRequired(app) then
+          appreq("dbsetup").ensure(app, { created = not dbExists })
+      end
+      local missing, detail = schema.missingRequired(app)
+      if missing then
+         error("Unsupported CMS database schema after known repairs: " .. tostring(detail), 2)
+      end
+      identityschema.ensure(app)
+      if app.identityProvider then
+         app.identity = app.identityProvider
+      else
+         local identityCtx = {
+            db = app.db,
+            trace = function(_, ...)
+               trace("FuguHub identity:", ...)
+            end
+         }
+          app.identity = identityservice.start(
+             identityCtx, identitystore.open(app))
+       end
+       bootstrap.run(app)
+    end)
+end
+
+if normalStartup then
+   normalStartup = startupStep("settings and theme", function()
+      settings.load(app)
+      theme.install(app)
+      smqservice.install(app)
+      local smqOk, smqErr = smqservice.configure(app)
+      if not smqOk then error(smqErr, 2) end
+      mcpconfig.load(app)
+      mcpserver.install(app)
+   end)
+end
+
+if normalStartup and
+   (app.engineIo:stat("plugins") or rootIo:stat("plugins")) then
+   normalStartup = startupStep("plugins", function()
+      pluginManager = appreq("plugins").loadInstalled(app)
+   end, "One or more CMS plugins could not be initialized.",
+      "Review the plugin error below, correct or remove the affected package, and restart the CMS application.")
+end
+
+if normalStartup then
+   normalStartup = startupStep("assets preload", function()
+      runAssetsPreload(app, _ENV)
+   end, "The public assets application failed during assets/.preload.", "Fix the assets/.preload error shown below and restart the CMS application.")
+end
+
+if normalStartup then
+   assetsDir:lspfilter(app.assetsApp or app)
+
+   local adminApiGate = ba.create.dir("admin", 1)
+   adminApiGate:setfunc(adminauth.newApiGate(app))
+   assetsDir:insert(adminApiGate, true)
+
+   local adminDir = ba.create.dir("admin")
+   adminDir:setfunc(admin.new(app))
+   adminauth.install(app, adminDir)
+   assetsDir:insert(adminDir, true)
+
+   local mcpDir = ba.create.dir("mcp")
+   mcpDir:setfunc(mcpserver.new(app))
+   assetsDir:insert(mcpDir, true)
+
+   local smqDir = ba.create.dir("SMQ")
+   smqDir:setfunc(smqservice.newEndpoint(app))
+   assetsDir:insert(smqDir, true)
+
+   local cmsDir = ba.create.dir()
+   cmsDir:setfunc(router.new(app))
+   assetsDir:insert(cmsDir, true)
+   app.appDir:insert(assetsDir, true)
+   notfound.configure(app)
+else
+   app.appDir:insert(assetsDir, true)
+end
+
+function onunload()
+   if app then
+      execAssetsOnunload(app)
+   end
+   if app then adminauth.close(app) end
+   if pluginManager then
+      pluginManager:stopAll()
+      pluginManager = nil
+   end
+   if traceDir then
+      traceDir:ontrace()
+      traceDir = nil
+   end
+   if assetsDir then
+      assetsDir:unlink()
+      assetsDir = nil
+   end
+   if app and app.theme then pcall(theme.deactivate, app) end
+   if app and app.smq then pcall(function() app.smq:shutdown() end) end
+   if app and app.notFoundDir then
+      app.notFoundDir:unlink()
+      app.notFoundDir = nil
+   end
+   if app and app.mcp and app.mcp.close then
+      app.mcp:close()
+   end
+   if app and app.db and app.db.close then
+      app.db.close()
+   end
+end

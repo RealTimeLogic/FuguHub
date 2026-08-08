@@ -1,0 +1,135 @@
+local prio = 0
+local homeIo = assert(ba.openio "home")
+local cmsSource = homeIo:stat("cms.zip") and "cms.zip" or "cms"
+local cmsIo, cmsIoError = ba.mkio(homeIo, cmsSource)
+local instances = {}
+
+local function loadConfig()
+   local config = require "loadconf"
+   if type(config) ~= "table" then error("mako.conf did not return a table", 2) end
+   if type(config.cmsdomains) ~= "table" or #config.cmsdomains == 0 then
+      error("mako.conf must define cmsdomains", 2)
+   end
+   local control
+   local seen = {}
+   for index, entry in ipairs(config.cmsdomains) do
+      if type(entry) ~= "table" or type(entry.host) ~= "string" or
+         entry.host == "" then
+         error("cmsdomains entry " .. index .. " must define host", 2)
+      end
+      if seen[entry.host] then error("Duplicate CMS domain: " .. entry.host, 2) end
+      seen[entry.host] = true
+      if entry.control then
+         if control then error("Exactly one CMS domain may set control=true", 2) end
+         control = entry
+      end
+   end
+   if not control then error("Exactly one CMS domain must set control=true", 2) end
+   return config, control
+end
+
+local function cleanupFailed(appEnv, domainDir)
+   if appEnv then mako.execOnunload(appEnv) end
+   domainDir:unlink()
+end
+
+local function loadDomain(entry, config, provider, identityManagementUrl)
+   local domainDir = assert(ba.create.domainresrdr(entry.host, prio, cmsIo))
+   domainDir:header {
+      ["x-xss-protection"] = "1; mode=block",
+      ["x-frame-options"] = "SAMEORIGIN",
+      ["x-content-type-options"] = "nosniff"
+   }
+   domainDir:insert()
+
+   local appEnv = setmetatable({
+      io = cmsIo,
+      engineIo = cmsIo,
+      dir = domainDir,
+      dbName = "cms-" .. entry.host,
+      assetsDirName = "assets-" .. entry.host,
+      assetsZipName = "assets-" .. entry.host .. ".zip",
+      dirPrio = prio,
+      wfsConfig = config.wfs,
+      identityManagementUrl = identityManagementUrl
+   }, { __index = _G })
+   appEnv.app = appEnv
+
+   if provider then
+      appEnv.identityProvider = provider
+      appEnv.disabledPlugins = {
+         ["identity-access"] = true,
+         ["file-services"] = true,
+         ["large-file-mailer"] = true
+      }
+   end
+
+   local ok, loadError = mako.execPreload(appEnv, entry.host)
+   if not ok then
+      trace("CMS domain failed:", entry.host, tostring(loadError))
+      cleanupFailed(appEnv, domainDir)
+      return nil, loadError
+   end
+   domainDir:lspfilter(appEnv)
+   local instance = {
+      name = entry.host,
+      env = appEnv,
+      dir = domainDir,
+      control = entry.control == true
+   }
+   instances[#instances + 1] = instance
+   return instance
+end
+
+local function unloadInstances()
+   for index = #instances, 1, -1 do
+      local instance = instances[index]
+      mako.execOnunload(instance.env)
+      instance.dir:unlink()
+      instances[index] = nil
+   end
+end
+
+function onunload()
+   unloadInstances()
+end
+
+if not cmsIo then
+   error("Cannot open CMS package " .. cmsSource .. ": " ..
+      tostring(cmsIoError or "unknown error"))
+end
+
+local function start()
+   trace("Starting CMS domain loader")
+   local config, controlEntry = loadConfig()
+   local control, controlError = loadDomain(controlEntry, config)
+   if not control then error("Control CMS failed: " .. tostring(controlError), 2) end
+
+   local provider = control.env.identity
+   if not provider then
+      error("Control CMS did not publish its identity service", 2)
+   end
+   local identityManagementUrl = "//" .. controlEntry.host ..
+      "/admin/plugins/identity-access/"
+
+   for _, entry in ipairs(config.cmsdomains) do
+      if entry ~= controlEntry then
+         trace("Loading consumer CMS for domain:", entry.host)
+         local instance, loadError = loadDomain(
+            entry, config, provider, identityManagementUrl
+         )
+         if not instance then
+            error("Consumer CMS " .. entry.host .. " failed: " ..
+               tostring(loadError), 2)
+         end
+      end
+   end
+end
+
+local ok, startError = xpcall(start, function(message)
+   return debug.traceback(message, 2)
+end)
+if not ok then
+   unloadInstances()
+   error(startError, 0)
+end

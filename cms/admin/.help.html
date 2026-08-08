@@ -1,0 +1,91 @@
+<section class="panel"><div class="panel-body help-doc">
+<h2>Admin Model</h2>
+<p>The admin pages edit the CMS database directly. Public requests are still served by the CMS router: it resolves redirects, finds published content by path, renders the body, and wraps the result in the active theme.</p>
+<p>The admin UI is hard-coded and independent of public themes. Changing the active theme affects public pages, not the admin pages.</p>
+
+<h2>Content</h2>
+<p><code>/admin/content/</code> lists pages and posts from the <code>content</code> table. Use <code>All</code>, <code>Pages</code>, and <code>Posts</code> to filter by <code>content.type</code>.</p>
+<table><thead><tr><th>Field</th><th>Purpose</th></tr></thead><tbody>
+<tr><td><code>type</code></td><td><code>page</code> for ordinary pages, <code>post</code> for article/blog-style entries.</td></tr>
+<tr><td><code>path</code></td><td>Pages store their public path. Posts store only the article path; the configured blog base is added automatically. Paths should start with <code>/</code>.</td></tr>
+<tr><td><code>status</code></td><td>Only <code>published</code> content is served by public URL lookup. <code>draft</code> content remains editable but hidden.</td></tr>
+<tr><td><code>render_mode</code></td><td><code>html</code> sends stored HTML as content. <code>lsp</code> parses stored body content with <code>ba.parselsp()</code> before rendering.</td></tr>
+<tr><td><code>body_html</code></td><td>The main page or post body. LSP tags are allowed only when render mode is <code>lsp</code>.</td></tr>
+<tr><td><code>head_html</code></td><td>Extra markup inserted by the public theme into the document head.</td></tr>
+</tbody></table>
+
+<h3>Editing Rules</h3>
+<ul>
+<li>Changing a path changes the public URL immediately. Add a redirect for the old path when preserving inbound links matters.</li>
+<li>LSP content executes as trusted server-side code with the active public <code>app</code> table. Use it only for administrator-controlled content.</li>
+<li>Draft content can still appear in admin lists but is not returned by the public route lookup. Use <code>Preview</code> in the content list or editor to render a draft at its real path with a <code>cms-preview</code> query parameter.</li>
+<li><code>Delete</code> permanently removes content; there is no trash or restore feature. The confirmation page lists child paths, linked menu items, and related redirects. Child content is preserved, and the active editable 404 page cannot be deleted.</li>
+</ul>
+
+<h2>Categories</h2>
+<p><code>/admin/categories/</code> manages blog categories. A category slug is
+used in its archive URL and can be generated from the name by leaving the slug
+blank.</p>
+<ul>
+<li>Assign categories in the Content editor when the content type is <code>post</code>.</li>
+<li>Category archives use <code>&lt;blog base&gt;category/&lt;slug&gt;/</code>.</li>
+<li>Deleting a category removes its assignments but does not delete posts.</li>
+<li>Trusted LSP pages can list published posts with
+<code>app.cms:postsByCategory("slug", { limit = 20 })</code>.</li>
+</ul>
+
+<h2>Menus</h2>
+<p><code>/admin/menus/</code> edits rows in <code>menu_items</code> for the primary menu. The public theme decides how the tree is displayed.</p>
+<ul>
+<li><code>label</code> is the visible menu text.</li>
+<li><code>url</code> can point to CMS content or any internal/external URL.</li>
+<li><code>parent_id</code> nests one item under another. Leave it blank when adding a row to auto-select the closest visible parent by URL prefix.</li>
+<li><code>position</code> controls ordering within the same parent.</li>
+<li><code>Hide</code> marks a row hidden. Hidden rows stay editable in admin but are excluded from public navigation.</li>
+<li><code>Delete</code> permanently removes only the menu item, not its target content. Any child menu items are preserved and become top-level items.</li>
+</ul>
+
+<h2>Redirects</h2>
+<p><code>/admin/redirects/</code> manages <code>redirects</code>. Redirects are checked before normal content lookup.</p>
+<ul>
+<li><code>from_path</code> is the incoming URL path.</li>
+<li><code>to_path</code> is the target URL.</li>
+<li><code>status_code</code> should be <code>301</code> for a permanent redirect or <code>302</code> for a temporary redirect.</li>
+</ul>
+
+<h2>Themes</h2>
+<p><code>/admin/themes/</code> persists the selected theme in <code>options.active_theme</code>. Themes live outside the CMS app under the shared <code>themes</code> directory.</p>
+<ul>
+<li>The public theme supplies LSP templates such as <code>layout</code>, <code>page</code>, <code>post</code>, and <code>archive</code>.</li>
+<li>Theme assets are exposed under <code>/theme/</code> by the CMS theme loader.</li>
+<li>Changing the active theme reloads its resource reader and compiled templates immediately. A normal theme switch does not require a Mako restart.</li>
+</ul>
+
+<h2>Settings</h2>
+<p><code>/admin/settings/</code> controls public behavior persisted in the <code>options</code> table.</p>
+<ul>
+<li>The blog base URL selects the published-post archive path.</li>
+<li>HTMX navigation enables fragment responses; the active theme must implement the matching full-page and fragment contract.</li>
+<li>SMQ real-time messaging is available only with HTMX. It keeps one broker connection in the public shell while HTMX pages mount temporary event, direct-message, and RPC scopes.</li>
+<li>The editable 404 option installs a low-priority VFS callback and renders the selected published CMS page with HTTP status 404.</li>
+</ul>
+
+<h2>Users</h2>
+<p><code>/admin/users/</code> manages TPM-protected admin users. With no users, admin authentication is disabled. Adding the first user enables form authentication for the admin directory; removing every user disables it again.</p>
+
+<h2>MCP</h2>
+<p><code>/admin/mcp/</code> configures the bearer token for the mount-aware MCP Streamable HTTP endpoint at <code>/mcp/</code>. Use that exact directory URL in MCP Inspector, not <code>/mcp.lsp</code>. The endpoint is disabled until a token is saved.</p>
+<ul>
+<li>The token is encrypted in SQLite with a TPM-derived key and is never displayed after saving.</li>
+<li>MCP content creation and copying default to drafts. Ordinary updates preserve status; publishing and unpublishing use an explicit status operation.</li>
+<li>The MCP server publishes capability details, guides, examples, workflow prompts, and safe operational diagnostics in addition to administration tools.</li>
+<li>Selected pages and posts can be transferred between CMS servers using one-time ZIP snapshots. Transfers include content metadata and taxonomy assignments.</li>
+</ul>
+
+<h2>Operational Notes</h2>
+<ul>
+<li>Do not expose admin pages on an untrusted network until at least one admin user exists.</li>
+<li>Database writes use the dedicated CMS SQLite writer thread. Public reads use separate short-lived read connections.</li>
+<li>If the database is absent, startup creates the schema and an editable <code>/404/</code> page that links back to admin.</li>
+</ul>
+</div></section>

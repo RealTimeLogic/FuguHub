@@ -1,0 +1,10 @@
+{
+  "name": "embedded-dashboard",
+  "contentContract": {
+    "rendersContentTitle": true,
+    "titleElement": "h1",
+    "titleHasAnchor": false,
+    "recommendedBodyHeadingStart": 2,
+    "canSuppressRenderedTitle": false
+  }
+}

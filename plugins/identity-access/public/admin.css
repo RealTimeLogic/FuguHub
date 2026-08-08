@@ -1,0 +1,108 @@
+.identity-shell {
+   overflow: visible;
+   container-type: inline-size;
+}
+
+.identity-toolbar,
+.identity-actions {
+   display: flex;
+   align-items: center;
+   flex-wrap: wrap;
+   gap: 10px;
+}
+
+.identity-toolbar {
+   justify-content: space-between;
+   margin-bottom: 18px;
+}
+
+.identity-message {
+   min-height: 24px;
+   margin: 0 0 14px;
+   color: var(--muted);
+}
+
+.identity-message.error {
+   color: #ffb0ab;
+}
+
+.identity-columns {
+   display: grid;
+   grid-template-columns: minmax(280px, .8fr) minmax(420px, 1.2fr);
+   gap: 18px;
+}
+
+.identity-section {
+   min-width: 0;
+   padding: 16px;
+   border: 1px solid var(--line);
+   border-radius: 8px;
+   background: var(--panel-strong);
+}
+
+.identity-list {
+   display: grid;
+   gap: 10px;
+}
+
+.identity-card {
+   padding: 13px;
+   border: 1px solid var(--line-soft);
+   border-radius: 8px;
+   background: var(--panel);
+}
+
+.identity-card h3 {
+   margin: 0;
+   color: var(--white);
+   font-size: 1rem;
+}
+
+.identity-card p {
+   margin: 5px 0 0;
+}
+
+.identity-form {
+   display: grid;
+   gap: 12px;
+}
+
+.identity-form-grid {
+   display: grid;
+   grid-template-columns: repeat(2, minmax(0, 1fr));
+   gap: 12px;
+}
+
+.identity-role-grid {
+   display: grid;
+   grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+   gap: 8px;
+}
+
+.identity-role-grid label {
+   display: flex;
+   align-items: center;
+   gap: 8px;
+   margin: 0;
+   font-weight: 600;
+}
+
+.identity-role-grid input {
+   width: auto;
+}
+
+.identity-empty {
+   color: var(--muted);
+}
+
+@container (max-width: 820px) {
+   .identity-columns {
+      grid-template-columns: 1fr;
+   }
+}
+
+@container (max-width: 620px) {
+   .identity-form-grid {
+      grid-template-columns: 1fr;
+   }
+}

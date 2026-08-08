@@ -1,0 +1,87 @@
+.mailer-shell {
+   container-type: inline-size;
+}
+
+.mailer-admin-tabs {
+   display: flex;
+   gap: 6px;
+   margin: 0 0 16px;
+   overflow-x: auto;
+   border-bottom: 1px solid var(--line);
+}
+
+.mailer-admin-tabs a {
+   flex: 0 0 auto;
+   padding: 10px 12px;
+   color: var(--body);
+   text-decoration: none;
+   border-bottom: 3px solid transparent;
+}
+
+.mailer-admin-tabs a:hover,
+.mailer-admin-tabs a.active {
+   color: var(--green);
+   border-bottom-color: var(--green);
+}
+
+.mailer-shell .panel-body {
+   padding: 18px;
+}
+
+.mailer-state {
+   margin: 0 0 16px;
+   color: var(--muted);
+}
+
+.mailer-message {
+   min-height: 1.4em;
+   margin: 10px 0 0;
+   font-weight: 700;
+}
+
+.mailer-message.success {
+   color: var(--green);
+}
+
+.mailer-message.error {
+   color: var(--red);
+}
+
+.mailer-grid {
+   display: grid;
+   grid-template-columns: repeat(2, minmax(0, 1fr));
+   gap: 14px;
+}
+
+.mailer-flags {
+   display: flex;
+   flex-wrap: wrap;
+   gap: 18px;
+   margin: 16px 0;
+}
+
+.mailer-flags label {
+   display: inline-flex;
+   flex: 0 0 auto;
+   align-items: center;
+   gap: 7px;
+   white-space: nowrap;
+}
+
+.mailer-actions {
+   display: flex;
+   flex-wrap: wrap;
+   gap: 10px;
+}
+
+@container (max-width: 620px) {
+   .mailer-grid {
+      grid-template-columns: 1fr;
+   }
+
+   .mailer-flags {
+      flex-direction: column;
+      align-items: flex-start;
+      gap: 10px;
+   }
+}

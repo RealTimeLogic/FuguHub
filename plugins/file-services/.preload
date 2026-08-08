@@ -1,0 +1,19 @@
+local serviceModule = pluginreq "service"
+local admin = pluginreq "admin"
+local pluginApp = app
+
+return {
+   id = "file-services",
+   requires = { "identity-access" },
+
+   start = function(ctx)
+      local files = serviceModule.start(
+         ctx, ctx:requirePlugin("identity-access"), pluginApp)
+      admin.install(ctx, files)
+      return files
+   end,
+
+   stop = function(ctx)
+      serviceModule.stop()
+   end
+}

@@ -1,0 +1,22 @@
+local admin = pluginreq "admin"
+local pluginApp = app
+
+return {
+   id = "identity-access",
+
+   start = function(ctx)
+      local identity = ctx.identity
+      local ui = {
+         managementUrl = pluginApp.identityManagementUrl or
+            pluginApp.url("/admin/plugins/identity-access/")
+      }
+      ctx.app.identityAccessUi = ui
+      ctx:own(function()
+         if ctx.app.identityAccessUi == ui then
+            ctx.app.identityAccessUi = nil
+         end
+      end)
+      admin.install(ctx, identity)
+      return identity
+   end
+}

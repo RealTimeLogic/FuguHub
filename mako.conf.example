@@ -1,0 +1,25 @@
+-- Standalone packaged deployment.
+apps = {
+   { name = "", path = "cms.zip" }
+}
+
+-- File Services defaults to Mako home IO when this setting is omitted.
+-- Uncomment and adjust this table to serve another BAS IO or path.
+-- wfs = {
+--    io = "home",
+--    path = "/",
+--    baseurl = "/fs/",
+--    lockdir = ".locks"
+-- }
+
+-- Multi-domain packaged deployment. Replace the standalone apps table above
+-- with this apps table, then uncomment cmsdomains. Exactly one domain must be
+-- the control domain.
+-- apps = {
+--    { name = "", path = "CmsDomains.zip" }
+-- }
+--
+-- cmsdomains = {
+--    { host = "a.example.com", control = true },
+--    { host = "b.example.com" }
+-- }

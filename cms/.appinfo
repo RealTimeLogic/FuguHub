@@ -1,0 +1,6 @@
+{
+  "type": "lsp",
+  "rootapp": true,
+  "hidden": false,
+  "description": "FuguHub content management engine."
+}

@@ -1,0 +1,13 @@
+# Five pages
+/stress/page-small/
+/stress/page-medium/
+/stress/page-large/
+/stress/page-very-large/
+/stress/page-fairly-large/
+
+# Five blog posts
+/blog/stress-post-small/
+/blog/stress-post-medium/
+/blog/stress-post-large/
+/blog/stress-post-very-large/
+/blog/stress-post-fairly-large/
