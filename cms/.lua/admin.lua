@@ -1097,6 +1097,8 @@ local function themesPage(_ENV, app)
          local label = theme.name
          if theme.source == "zip" then
             label = label .. " (zip)"
+         elseif theme.source == "built-in" then
+            label = label .. " (built-in fallback)"
          end
          response:write("<option value='", esc(theme.name), "'", selected(active, theme.name), ">", esc(label), "</option>")
       end

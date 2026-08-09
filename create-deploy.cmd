@@ -41,22 +41,26 @@ powershell.exe -NoLogo -NoProfile -NonInteractive -ExecutionPolicy Bypass -Comma
  "$entry=$zip.CreateEntry($name,[IO.Compression.CompressionLevel]::Optimal);" ^
  "$input=$item.OpenRead();$output=$entry.Open();try{$input.CopyTo($output)}finally{$output.Dispose();$input.Dispose()}" ^
  "}}finally{$zip.Dispose();$stream.Dispose()}};" ^
- "New-PortableZip (Join-Path $root 'cms') $cmsZip;" ^
- "if($includePlugins){$archive=[IO.Compression.ZipFile]::Open($cmsZip,[IO.Compression.ZipArchiveMode]::Update);" ^
- "try{$plugins=Join-Path $root 'plugins';$entry=$archive.CreateEntry('plugins/');$entry.ExternalAttributes=16;" ^
- "foreach($folder in @(Get-ChildItem -LiteralPath $plugins -Recurse -Directory)){" ^
- "$name='plugins/'+$folder.FullName.Substring($plugins.Length).TrimStart('\').Replace('\','/')+'/';" ^
+ "function Add-PortableTree($target,$source,$prefix){" ^
+ "$source=(Resolve-Path $source).Path.TrimEnd('\');$prefix=$prefix.TrimEnd('/');" ^
+ "$archive=[IO.Compression.ZipFile]::Open($target,[IO.Compression.ZipArchiveMode]::Update);" ^
+ "try{$entry=$archive.CreateEntry($prefix+'/');$entry.ExternalAttributes=16;" ^
+ "foreach($folder in @(Get-ChildItem -LiteralPath $source -Recurse -Directory)){" ^
+ "$name=$prefix+'/'+$folder.FullName.Substring($source.Length).TrimStart('\').Replace('\','/')+'/';" ^
  "$entry=$archive.CreateEntry($name);$entry.ExternalAttributes=16};" ^
- "foreach($item in @(Get-ChildItem -LiteralPath $plugins -Recurse -File)){" ^
- "$name='plugins/'+$item.FullName.Substring($plugins.Length).TrimStart('\').Replace('\','/');" ^
+ "foreach($item in @(Get-ChildItem -LiteralPath $source -Recurse -File)){" ^
+ "$name=$prefix+'/'+$item.FullName.Substring($source.Length).TrimStart('\').Replace('\','/');" ^
  "$entry=$archive.CreateEntry($name,[IO.Compression.CompressionLevel]::Optimal);" ^
  "$input=$item.OpenRead();$output=$entry.Open();try{$input.CopyTo($output)}finally{$output.Dispose();$input.Dispose()}" ^
  "}}finally{$archive.Dispose()}};" ^
+ "New-PortableZip (Join-Path $root 'cms') $cmsZip;" ^
+ "if($includePlugins){Add-PortableTree $cmsZip (Join-Path $root 'plugins') 'plugins'};" ^
+ "Add-PortableTree $cmsZip (Join-Path $root 'themes\default') 'fallback-theme';" ^
  "if($includePlugins){New-PortableZip (Join-Path $root 'CmsDomains') $domainsZip};" ^
  "New-PortableZip (Join-Path $root 'themes\default') $themeZip;" ^
  "New-PortableZip (Join-Path $root 'themes\embedded-dashboard') $dashboardZip;" ^
  "$archive=[IO.Compression.ZipFile]::OpenRead($cmsZip);" ^
- "try{$names=@($archive.Entries.FullName);if($names -notcontains '.preload' -or $names -notcontains '.appinfo' -or $names -notcontains '.lua/admin.lua' -or $names -notcontains 'lib/.lua/fastmcp/engine.lua'){throw ('cms.zip has an invalid root layout: '+($names-join ', '))};if($includePlugins -and ($names -notcontains 'plugins/identity-access/.preload' -or $names -notcontains 'plugins/file-services/.preload' -or $names -notcontains 'plugins/large-file-mailer/.preload')){throw 'cms.zip is missing bundled plugins'};if(-not $includePlugins -and @($names|Where-Object{$_ -like 'plugins/*'}).Count -ne 0){throw 'core cms.zip unexpectedly contains plugins'}}finally{$archive.Dispose()};" ^
+ "try{$names=@($archive.Entries.FullName);if($names -notcontains '.preload' -or $names -notcontains '.appinfo' -or $names -notcontains '.lua/admin.lua' -or $names -notcontains 'lib/.lua/fastmcp/engine.lua' -or $names -notcontains 'fallback-theme/theme.json' -or $names -notcontains 'fallback-theme/templates/layout.lsp'){throw ('cms.zip has an invalid root layout: '+($names-join ', '))};if($includePlugins -and ($names -notcontains 'plugins/identity-access/.preload' -or $names -notcontains 'plugins/file-services/.preload' -or $names -notcontains 'plugins/large-file-mailer/.preload')){throw 'cms.zip is missing bundled plugins'};if(-not $includePlugins -and @($names|Where-Object{$_ -like 'plugins/*'}).Count -ne 0){throw 'core cms.zip unexpectedly contains plugins'}}finally{$archive.Dispose()};" ^
  "if($includePlugins){$archive=[IO.Compression.ZipFile]::OpenRead($domainsZip);" ^
  "try{$names=@($archive.Entries.FullName);if($names -notcontains '.preload'){throw 'CmsDomains.zip has an invalid root layout'}}finally{$archive.Dispose()}};" ^
  "$archive=[IO.Compression.ZipFile]::OpenRead($themeZip);" ^

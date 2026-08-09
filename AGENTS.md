@@ -110,7 +110,9 @@ Optional official guidance:
 
 ## Non-Negotiable Rules
 
-- Keep engine code, site assets, themes, and mutable data separate.
+- Keep engine code, site assets, installed themes, and mutable data separate.
+  The deployment builders deliberately embed the read-only default theme under
+  `fallback-theme/` so `cms.zip` can start when no external theme is installed.
 - Treat packages under optional `plugins/` as trusted executable code. Use a
   root `.preload`, private `pluginreq` modules, native BAS VFS mounts, and the
   owner-scoped plugin context; do not add plugin behavior to the CMS router.
@@ -167,8 +169,9 @@ multi-domain loader, or the standalone plugin-free deployment with:
 ```
 
 The full output is under `deploy/`; the core output is under `deploy-core/`.
-The integration suite starts both archive variants and verifies bundled plugin
-discovery and multi-domain service ownership.
+The integration suite starts the standalone archive without external themes,
+verifies the built-in fallback, and checks bundled plugin discovery and
+multi-domain service ownership.
 
 Build and run the separate hardware stress fixture as documented in
 [Stress Harness](stress/README.md):

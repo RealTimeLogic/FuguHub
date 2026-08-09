@@ -1,6 +1,7 @@
 local M = {}
 local db = appreq "db"
 local validation = appreq "validation"
+local pathio = require "pathio"
 local REQUIRED_TEMPLATES = {
    "layout", "page", "post", "archive", "fragment", "not-found"
 }
@@ -75,13 +76,66 @@ local function loadContract(themeInfo)
    }
 end
 
+local function externalThemes(app)
+   local byName = {}
+   local themesIo = app.themesIo or app.io
+   if themesIo and themesIo.files then
+      for name, isdir in themesIo:files("", true) do
+         if name ~= "." and name ~= ".." then
+            if isdir then
+               local safeName = normalizeThemeName(name)
+               if safeName then
+                  byName[safeName] = byName[safeName] or {
+                     name = safeName,
+                     source = "directory"
+                  }
+               end
+            else
+               local base = name:match("^(.-)%.zip$")
+               local safeName = base and normalizeThemeName(base)
+               if safeName then byName[safeName] = { name = safeName, source = "zip" } end
+            end
+         end
+      end
+   end
+   local out = {}
+   for _, item in pairs(byName) do out[#out + 1] = item end
+   table.sort(out, function(a, b) return a.name < b.name end)
+   return out
+end
+
+local function embeddedThemeAvailable(app)
+   return app.engineIo and app.engineIo:stat("fallback-theme") ~= nil
+end
+
+local function embeddedThemeSource(app, themeName)
+   if themeName ~= (app.defaultTheme or "default") or not embeddedThemeAvailable(app) then
+      return nil
+   end
+   return {
+      name = themeName,
+      path = "fallback-theme",
+      source = "built-in",
+      io = pathio(app.engineIo, "fallback-theme")
+   }
+end
+
 local function themeSource(app, themeName)
    local themesIo = app.themesIo or app.io
-   local themePath = themeName
-   local source = "directory"
+   local themePath
+   local source
    if themesIo:stat(themeName .. ".zip") then
       themePath = themeName .. ".zip"
       source = "zip"
+   elseif themesIo:stat(themeName) then
+      themePath = themeName
+      source = "directory"
+   elseif #externalThemes(app) == 0 then
+      local embedded = embeddedThemeSource(app, themeName)
+      if embedded then return embedded end
+   end
+   if not themePath then
+      return nil, "Cannot open theme " .. themeName .. ": theme not found"
    end
    local themeIo, err = ba.mkio(themesIo, themePath)
    if not themeIo then
@@ -118,33 +172,16 @@ function M.open(app, name)
 end
 
 function M.list(app)
-   local byName = {}
-   local themesIo = app.themesIo or app.io
-   if themesIo and themesIo.files then
-      for name, isdir in themesIo:files("", true) do
-         if name ~= "." and name ~= ".." then
-            if isdir then
-               local safeName = normalizeThemeName(name)
-               if safeName then
-                  byName[safeName] = byName[safeName] or {
-                     name = safeName,
-                     source = "directory"
-                  }
-               end
-            else
-               local base = name:match("^(.-)%.zip$")
-               local safeName = base and normalizeThemeName(base)
-               if safeName then byName[safeName] = { name = safeName, source = "zip" } end
-            end
-         end
-      end
+   local out = externalThemes(app)
+   if #out == 0 and embeddedThemeAvailable(app) then
+      out[1] = {
+         name = app.defaultTheme or "default",
+         source = "built-in"
+      }
    end
-   local out = {}
-   for _, item in pairs(byName) do
+   for _, item in ipairs(out) do
       item.active = app.theme and app.theme.name == item.name or false
-      out[#out + 1] = item
    end
-   table.sort(out, function(a, b) return a.name < b.name end)
    return out
 end
 

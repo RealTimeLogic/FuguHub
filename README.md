@@ -17,6 +17,8 @@ agents.
 
 ## Quick Start
 
+FuguHub requires Mako Server with BAS 5840 or newer.
+
 Install Mako Server and make sure `mako` is on `PATH`, then run from the
 repository root:
 
@@ -59,10 +61,11 @@ create-core-deploy.cmd
 sh ./create-core-deploy.sh
 ```
 
-Generated archives are written under `deploy/` or `deploy-core/`. Themes remain
-separate from `cms.zip` so they can be changed independently. Copy
-`mako.conf.example` to the deployment directory as `mako.conf` and adjust it
-for the target system.
+Generated archives are written under `deploy/` or `deploy-core/`. Each
+`cms.zip` contains a built-in copy of the default theme, so it can start without
+an external `themes/` directory. External theme ZIPs remain separate and take
+precedence when installed. Copy `mako.conf.example` to the deployment directory
+as `mako.conf` and adjust it for the target system.
 
 ## Test
 

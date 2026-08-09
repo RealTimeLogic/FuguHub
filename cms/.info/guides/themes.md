@@ -31,6 +31,11 @@ Theme tools do not operate on the site-owned `assets/` application. Installed
 theme deletion, direct theme-package import, and browser visual QA are not
 available.
 
+When no external themes are installed, `listThemes` returns the read-only
+`default` theme embedded in `cms.zip` with source `built-in`. It can be read or
+used as `fromTheme` for a draft. Committing an external theme named `default`
+supersedes the fallback.
+
 Read the `assets` guide before referencing site-owned files. The source
 directory name `assets/` is not part of their public URL. MCP asset
 `chat/chat.js` is referenced as `model.url('/chat/chat.js')`; the

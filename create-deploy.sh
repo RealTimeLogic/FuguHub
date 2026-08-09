@@ -61,6 +61,15 @@ if [ "$include_plugins" = true ]; then
    )
 fi
 
+fallback_stage="$deploy_dir/.fallback-stage"
+mkdir -p -- "$fallback_stage/fallback-theme"
+cp -R -- "$root/themes/default/." "$fallback_stage/fallback-theme/"
+(
+   cd -- "$fallback_stage"
+   zip -q -r "$cms_zip" fallback-theme
+)
+rm -rf -- "$fallback_stage"
+
 (
    cd -- "$root/themes/default"
    zip -q -r "$default_zip" .
@@ -88,6 +97,14 @@ has_entry "$cms_zip" .lua/admin.lua || {
 }
 has_entry "$cms_zip" lib/.lua/fastmcp/engine.lua || {
    printf 'ERROR: cms.zip is missing FastMCP.\n' >&2
+   exit 1
+}
+has_entry "$cms_zip" fallback-theme/theme.json || {
+   printf 'ERROR: cms.zip is missing the built-in fallback theme metadata.\n' >&2
+   exit 1
+}
+has_entry "$cms_zip" fallback-theme/templates/layout.lsp || {
+   printf 'ERROR: cms.zip is missing the built-in fallback theme templates.\n' >&2
    exit 1
 }
 
@@ -133,4 +150,3 @@ if [ "$include_plugins" = true ]; then
 fi
 printf '  %s/themes/default.zip\n' "$deploy_name"
 printf '  %s/themes/embedded-dashboard.zip\n' "$deploy_name"
-

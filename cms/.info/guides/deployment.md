@@ -34,11 +34,13 @@ work/
 
 Keep these responsibilities separate:
 
-- `cms/`: engine code. The full deployment builder packages the shipped plugins
-  into `cms.zip`; the core builder omits them.
+- `cms/`: engine code. Both deployment builders add a built-in default fallback
+  theme to `cms.zip`; the full builder also packages the shipped plugins and the
+  core builder omits them.
 - `plugins/`: optional external trusted packages supported during development.
   The shipped production plugins are normally bundled into the full `cms.zip`.
-- `themes/`: installed public themes. Use either theme directories or theme ZIP files. Do not put themes inside the engine package.
+- `themes/`: installed public themes. Use either theme directories or theme ZIP
+  files. They take precedence over the read-only fallback in `cms.zip`.
 - `assets/`: site-owned static files and optional public LSP app files for development.
 - `assets.zip`: deployed assets package. If present, it takes precedence over `assets/`.
 - `data/`: writable runtime data, including `cms.sqlite.db`.
@@ -223,6 +225,11 @@ themes/example.zip
 themes/example/
 ```
 
+When the external theme store contains no themes, the CMS exposes the packaged
+default with `pathio(app.engineIo, "fallback-theme")`. This works from both an
+unpacked engine and `cms.zip`. The fallback is read-only and is not used to hide
+an invalid external theme.
+
 If both exist, the ZIP wins. The admin theme page lists directory themes and
 zip-packaged themes, showing zip-backed themes as `name (zip)` while saving the
 logical base name such as `example`.
@@ -263,12 +270,13 @@ writes `deploy/CmsDomains.zip` and compressed theme packages. Use this layout
 for the supported multi-domain configuration.
 
 `create-core-deploy.cmd` writes `deploy-core/cms.zip` without plugins and the
-same compressed themes. It does not write `CmsDomains.zip`; this package is for
-a standalone CMS that does not need the management plugins.
+same compressed external themes. It does not write `CmsDomains.zip`; this
+package is for a standalone CMS that does not need the management plugins.
 
-Both scripts validate ZIP roots and plugin inclusion or exclusion. The
-integration harness starts both archive layouts and verifies the full
-multi-domain plugin ownership model.
+Both scripts embed and validate `fallback-theme/` in `cms.zip`, validate ZIP
+roots and plugin inclusion or exclusion, and still produce separate theme ZIPs.
+The integration harness starts the standalone archive without external themes
+and verifies the full multi-domain plugin ownership model.
 
 Package only stable application code:
 
@@ -276,7 +284,8 @@ Package only stable application code:
   included or excluded consistently.
 - Optional package candidate: `assets/` as `assets.zip` for deployed site assets.
 - Keep outside packages: `data/`, generated cache/runtime files, logs, local backups.
-- Keep themes outside the engine so a site can change themes without rebuilding `cms.zip`.
+- Keep installed themes outside the engine so a site can change themes without
+  rebuilding `cms.zip`; `fallback-theme/` is the builder-owned exception.
 - Package a deployed theme as `themes/<theme>.zip` when you want immutable theme assets and templates.
 
 ### Packaged Multi-Domain Layout

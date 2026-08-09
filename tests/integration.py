@@ -5747,6 +5747,12 @@ def test_deployed_archive() -> None:
         not any(name.startswith("plugins/") for name in core_names),
         "core cms.zip unexpectedly contains plugins",
     )
+    for names, label in ((full_names, "full"), (core_names, "core")):
+        check(
+            "fallback-theme/theme.json" in names
+            and "fallback-theme/templates/layout.lsp" in names,
+            f"{label} cms.zip does not contain the built-in fallback theme",
+        )
     check(
         not (ROOT / "deploy-core" / "CmsDomains.zip").exists(),
         "core deployment unexpectedly contains the multi-domain loader",
@@ -5756,7 +5762,6 @@ def test_deployed_archive() -> None:
     remove_tree(runtime)
     runtime.mkdir(parents=True)
     shutil.copy2(ROOT / "deploy-core" / "cms.zip", runtime / "cms.zip")
-    shutil.copytree(ROOT / "deploy-core" / "themes", runtime / "themes")
 
     with MakoProcess(
         runtime, mount="zipbase", application="cms.zip"
@@ -5766,6 +5771,16 @@ def test_deployed_archive() -> None:
         check(
             code == 200 and b"Dashboard" in dashboard,
             f"deployed CMS admin failed under a base path: HTTP {code}",
+        )
+        code, _, themes_page = browser.request("/zipbase/admin/themes/")
+        check(
+            code == 200 and b"default (built-in fallback)" in themes_page,
+            "standalone cms.zip did not expose its built-in fallback theme",
+        )
+        code, _, theme_css = browser.request("/zipbase/theme/style.css")
+        check(
+            code == 200 and b":root" in theme_css,
+            "standalone cms.zip did not serve built-in fallback theme assets",
         )
         code, _, empty_site = browser.request("/zipbase/")
         check(

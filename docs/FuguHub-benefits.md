@@ -178,17 +178,17 @@ state changes that originate asynchronously from a device or server.
 FuguHub keeps responsibilities separate:
 
 ```text
-cms.zip       packaged CMS engine
-themes/       directory or ZIP-packaged themes
+cms.zip       packaged CMS engine and built-in fallback theme
+themes/       optional directory or ZIP-packaged themes
 assets/       development site application
 assets.zip    optional packaged site application
 data/         writable CMS SQLite database and optional plugin data
 ```
 
-The engine, default theme, HTMX runtime, and SMQ integration are local; the
-default deployment does not depend on a public CDN. If no database exists,
-FuguHub creates the schema, default settings, primary menu, and editable 404
-page automatically.
+The engine, built-in default theme, HTMX runtime, and SMQ integration are local;
+the default deployment does not depend on a public CDN. External themes take
+precedence when installed. If no database exists, FuguHub creates the schema,
+default settings, primary menu, and editable 404 page automatically.
 
 The same package can run at the server root or below a named base URI. Themes,
 content, assets, admin pages, MCP, HTMX, SMQ, redirects, and preview links use

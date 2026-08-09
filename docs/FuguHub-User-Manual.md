@@ -6,6 +6,9 @@ included plugins. Developer-facing Lua APIs are documented separately in
 
 ## Getting Started
 
+FuguHub requires Mako Server with BAS 5840 or newer. Startup stops with a
+version error before installing the application when the BAS library is older.
+
 ### Choose a Package
 
 FuguHub can be run from its source directories or from deployment ZIP files.
@@ -16,8 +19,9 @@ The repository provides two deployment builders:
 | `create-deploy.cmd` or `create-deploy.sh` | `deploy/cms.zip`, `CmsDomains.zip`, and themes | You want Identity and Access, File Services, the SMTP/Large File Mailer, or multiple domains. |
 | `create-core-deploy.cmd` or `create-core-deploy.sh` | `deploy-core/cms.zip` and themes | You want only the standalone CMS. |
 
-The full `cms.zip` contains the shipped plugins. Themes remain outside it so
-they can be changed independently.
+The full `cms.zip` contains the shipped plugins. Both package variants also
+contain a built-in default theme used only when no external themes are
+installed. The separate theme packages can be changed independently.
 
 ### Runtime Directory
 
@@ -26,7 +30,7 @@ A normal standalone runtime looks like this:
 ```text
 runtime/
   cms.zip                 or cms/ during development
-  themes/
+  themes/                  optional external themes
     default.zip
   assets/                 optional site files and LSP application
   assets.zip              optional packaged replacement for assets/
@@ -209,14 +213,19 @@ for a temporary redirect. Redirect sources must be unique.
 
 ### Themes
 
-Themes are installed outside the CMS engine under `themes/` as directories or
-ZIP files. Open **Themes**, select one of the detected themes, and choose
-**Save**. Activation is persistent and takes effect without restarting Mako.
+Themes are normally installed outside the CMS engine under `themes/` as
+directories or ZIP files. Open **Themes**, select one of the detected themes,
+and choose **Save**. Activation is persistent and takes effect without
+restarting Mako.
 
-The default theme is included with both deployment variants. Theme creation,
-validation, replacement, and export are also available through MCP. If an
-active theme is unavailable during startup, FuguHub tries the default theme and
-then other installed themes. Startup stops only when no usable theme exists.
+Both `cms.zip` variants contain a read-only built-in copy of the default theme.
+It is listed as **default (built-in fallback)** only when the external theme
+store is empty. Any external theme takes precedence; an external `default`
+directory or ZIP replaces the fallback. Theme creation, validation,
+replacement, and export are also available through MCP. If an active external
+theme is unavailable during startup, FuguHub tries the external default and
+then other installed themes. An invalid external theme is reported instead of
+being hidden by the built-in fallback.
 
 ### Public Site Settings
 
@@ -746,7 +755,7 @@ It creates:
 
 ```text
 deploy/
-  cms.zip                 CMS engine with the included plugins
+  cms.zip                 CMS engine, plugins, and built-in fallback theme
   CmsDomains.zip          multi-domain loader
   themes/
     default.zip
@@ -764,18 +773,19 @@ sh ./create-core-deploy.sh
 ```
 
 That script creates `deploy-core/cms.zip` without a `plugins/` tree, plus the
-compressed themes. It intentionally does not create `CmsDomains.zip`; the core
-package is for a standalone CMS.
+compressed external themes. It intentionally does not create `CmsDomains.zip`;
+the core package is for a standalone CMS.
 
-Themes remain outside `cms.zip`, allowing installed themes to be changed without
-rebuilding the CMS package. Site assets and mutable `data/` files also remain
-outside the application ZIPs.
+The default theme is also embedded under `fallback-theme/` inside each
+`cms.zip`, so the package can run by itself. External themes remain separate,
+take precedence, and can be changed without rebuilding the CMS package. Site
+assets and mutable `data/` files also remain outside the application ZIPs.
 
 ### Configure the Domains
 
-Place `cms.zip`, `CmsDomains.zip`, `mako.conf`, and `themes/` in one runtime
-directory. Configure `CmsDomains.zip` as the root application and define the
-host names in the same `mako.conf`:
+Place `cms.zip`, `CmsDomains.zip`, and `mako.conf` in one runtime directory; add
+`themes/` when using external themes. Configure `CmsDomains.zip` as the root
+application and define the host names in the same `mako.conf`:
 
 ```lua
 apps = {

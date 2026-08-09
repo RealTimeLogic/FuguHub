@@ -16,6 +16,7 @@ runtime-root/
     .info/                     embedded MCP instructions and guides
     admin/                     admin CSS, JS, includes, and LSP pages
     assets/                    engine-owned client dependencies
+    fallback-theme/            packaged read-only default theme
 
   themes/                      installed public themes
     default/                   directory package
@@ -37,8 +38,9 @@ runtime-root/
 ```
 
 The full deployment builder places shipped plugins inside `cms.zip`. The core
-builder omits plugins. External immediate plugin packages under the runtime
-root use the same discovery contract.
+builder omits plugins. Both builders add the default theme as
+`fallback-theme/`. External immediate plugin packages under the runtime root use
+the same discovery contract.
 
 ## Ownership
 
@@ -46,9 +48,11 @@ root use the same discovery contract.
 assets, theme activation, SQLite access, cache policy, and runtime invalidation.
 It must not depend on the optional site assets directory.
 
-`themes/` owns presentation. A theme may be a directory or ZIP. The runtime
-prefers `themes/<name>.zip`, then `themes/<name>/`. Activation compiles the
-complete template contract before replacing the active reader.
+`themes/` owns installed presentation. A theme may be a directory or ZIP. The
+runtime prefers `themes/<name>.zip`, then `themes/<name>/`. If no external theme
+is installed, `pathio(app.engineIo, "fallback-theme")` exposes the packaged
+default theme from either a directory application or `cms.zip`. Activation
+compiles the complete template contract before replacing the active reader.
 
 `assets/` or `assets.zip` owns site files and the optional public LSP
 application. `assets.zip` takes precedence when both exist. Site assets take

@@ -111,11 +111,13 @@ LSP is trusted server-side Lua and executes on every request, including when
 browser revalidation is enabled. Do not cache complete rendered LSP output
 without an explicit deterministic-output contract.
 
-Themes are external packages. A theme is opened from `themes/<name>.zip` when
-present, otherwise `themes/<name>/`. Activation compiles all required templates
-before replacing the active VFS reader. Failure leaves the previous valid
-theme active; startup searches installed fallbacks and becomes fatal only when
-no theme can load.
+Installed themes are external packages. A theme is opened from
+`themes/<name>.zip` when present, otherwise `themes/<name>/`. When the external
+theme store is empty, the packaged default is opened with
+`pathio(app.engineIo, "fallback-theme")`. Activation compiles all required
+templates before replacing the active VFS reader. Failure leaves the previous
+valid theme active; startup searches installed fallbacks and becomes fatal only
+when no theme can load.
 
 Theme templates receive a render model and the active public app. They render
 data but do not own durable mutations. The exact authoring contract is exposed
