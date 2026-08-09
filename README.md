@@ -1,9 +1,17 @@
 # FuguHub
 
+![Fuguhub Logo](https://fuguhub.com/images/FuguHub.png "Fuguhub Logo")
+
 FuguHub is a compact content-management and Lua web-application platform for
 Mako Server. It combines database-backed pages and posts with LSP, HTMX, SMQ,
 SQLite, themes, optional plugins, and a Streamable HTTP MCP interface for AI
 agents.
+
+This Mako Server-based implementation supersedes the
+[original FuguHub](https://fuguhub.com/). Existing users may continue running
+the original version, while new installations should use this version. The
+easiest way to get started is with the
+[Mako Server Developer Edition](https://makoserver.net/documentation/developer-package/).
 
 ## Highlights
 
