@@ -138,6 +138,55 @@ untrusted network:
 After the first enabled `cms-admin` user exists, `/admin/` requires login. The
 CMS prevents removal or demotion of the final enabled administrator.
 
+### Move an Existing Database to Another Computer
+
+FuguHub stores content, configuration, user identities, and encrypted secrets
+in the CMS SQLite database. The FuguHub user database, MCP bearer token, and
+Large File Mailer SMTP password are all protected with keys unique to the
+computer. Copying the SQLite file does not make these credentials usable on
+another computer.
+
+The repository provides `tools/reset-db-secrets.lua` for this migration. Stop
+every Mako process using the database before running it. Mako standalone script
+mode accepts only the script filename on its command line, so provide the
+database filename with the `FUGUHUB_DB` environment variable.
+
+In PowerShell, run:
+
+```powershell
+$env:FUGUHUB_DB='C:\path\to\data\cms.sqlite.db'
+mako tools/reset-db-secrets.lua
+Remove-Item Env:FUGUHUB_DB
+```
+
+On Linux, run:
+
+```sh
+FUGUHUB_DB=/path/to/data/cms.sqlite.db mako tools/reset-db-secrets.lua
+```
+
+The script preserves content and non-secret configuration. It removes the user
+credential database, identity profiles and role assignments, MCP token, and
+SMTP password. It also disables the mailer when its password is removed.
+
+The script creates a backup beside the database named
+`<database-file>.before-secret-reset-<timestamp>.bak` before changing anything.
+That backup still contains the old encrypted secrets and must be protected or
+removed after the migration is verified.
+
+On the destination computer, create a new administrator and MCP token during
+the next startup:
+
+```bat
+mako -credentials admin:choose-a-strong-password -token replace-with-a-long-random-token
+```
+
+Then enter the SMTP password again before enabling the mailer. SQLite databases
+created by an older FuguHub version may contain a user database protected by the
+former global key mode. The current runtime deliberately rejects that credential
+blob; run this reset utility before starting the upgraded or copied database and
+create new user passwords afterward.
+
 ## CMS Administration
 
 ### Dashboard

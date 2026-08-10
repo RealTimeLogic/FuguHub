@@ -143,12 +143,12 @@ mutation.
 
 ## Authentication And Multi-Domain Ownership
 
-Core identity profiles, roles, assignments, audit rows, and the TPM-encrypted
-JSON-user blob live in the CMS SQLite database. Authentication is disabled only
-while no enabled user has `cms-admin`; otherwise the admin VFS uses the native
-BAS form authenticator and authorizer. Admin LSP fragments also require the
-session marker `session.isCmsAdmin` so authentication performed by another app
-does not grant CMS administration.
+Core identity profiles, roles, assignments, audit rows, and the device-unique
+TPM-encrypted JSON-user blob live in the CMS SQLite database. Authentication is
+disabled only while no enabled user has `cms-admin`; otherwise the admin VFS
+uses the native BAS form authenticator and authorizer. Admin LSP fragments also
+require the session marker `session.isCmsAdmin` so authentication performed by
+another app does not grant CMS administration.
 
 `CmsDomains` starts exactly one control CMS first. The control owns identity
 and the shared management plugins. Consumer domains receive the same identity

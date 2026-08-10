@@ -243,10 +243,14 @@ A new database is seeded with:
 - a published LSP page at `/404/` with a mount-safe link to the admin UI.
 
 `data/cms.sqlite.db` also owns CMS identity profiles, roles, audit rows, and a
-TPM-encrypted authenticator blob. Renaming or removing this database therefore
-creates a genuinely fresh CMS identity store; there is no separate admin-user
-or Identity Access credential file. Other optional plugins may still own their
-own mutable data below `data/plugins/`.
+device-unique TPM-encrypted authenticator blob. Renaming or removing this
+database therefore creates a genuinely fresh CMS identity store; there is no
+separate admin-user or Identity Access credential file. Copying the database to
+another computer does not transfer usable identities, the MCP token, or the
+Large File Mailer SMTP password. Use the repository's offline
+`tools/reset-db-secrets.lua` utility before starting a moved database, then
+create new user passwords and secrets. Other optional plugins may still own
+their own mutable data below `data/plugins/`.
 
 This automatic runtime behavior does not remove the required first question for
 an offline editing task: an agent must still confirm which database the user

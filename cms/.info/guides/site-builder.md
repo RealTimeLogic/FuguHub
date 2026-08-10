@@ -100,9 +100,11 @@ or invent a prebuilt database merely to satisfy startup.
 
 The admin UI is open by default when no admin users exist. Use
 `/admin/users/` to create the first admin user. Profiles, role assignments,
-audit rows, and the TPM-encrypted BAS user database are stored together in
-`data/cms.sqlite.db`. After an enabled user has `cms-admin`, the admin directory
-uses a BAS form authenticator and an authorizer requiring that role.
+audit rows, and the device-unique TPM-encrypted BAS user database are stored
+together in `data/cms.sqlite.db`. The credential blob cannot be decrypted after
+copying the database to another computer. After an enabled user has `cms-admin`,
+the admin directory uses a BAS form authenticator and an authorizer requiring
+that role.
 
 The optional Identity Access plugin adds the Users & Access interface for the
 same core identity service. It does not select or mirror another provider. The

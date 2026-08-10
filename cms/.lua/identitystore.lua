@@ -15,7 +15,7 @@ local function execute(conn, sql)
 end
 
 local function newTju(encrypted)
-   local tju = ba.tpm.jsonuser(KEY, true)
+   local tju = ba.tpm.jsonuser(KEY, false)
    if encrypted then
       local ok, err = tju.setdb(encrypted)
       if not ok then
@@ -48,6 +48,8 @@ local function legacyTju(app, path, key)
       error("Cannot read legacy CMS identity data " .. path .. ": " ..
          tostring(err), 2)
    end
+   -- Legacy external files used the global key. Read them only for the
+   -- one-time migration into the device-unique SQLite identity store.
    local tju = ba.tpm.jsonuser(key, true)
    local ok, loadErr = tju.setdb(encrypted)
    if not ok then

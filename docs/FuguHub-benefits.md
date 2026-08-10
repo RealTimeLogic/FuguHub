@@ -210,7 +210,8 @@ Its runtime design includes:
 - native VFS composition for engine routes, site assets, themes, admin
   authentication, editable 404 handling, and named application mounts;
 - automatic response compression and browser cache validation;
-- TPM-backed administrator authentication and encrypted MCP configuration.
+- device-unique TPM-backed administrator authentication, encrypted MCP
+  configuration, and SMTP credentials.
 
 ## Where FuguHub Fits
 

@@ -213,9 +213,11 @@ CREATE TABLE IF NOT EXISTS identity_audit (
 ```
 
 `identity_credentials` has at most one row. Its value is a Base64 wrapper around
-the TPM-encrypted BAS JSON user database, not plaintext JSON. Profiles and roles
-remain queryable without exposing passwords. The optional Identity Access
-plugin manages these core tables; it does not own a second credential store.
+the device-unique TPM-encrypted BAS JSON user database, not plaintext JSON. A
+copied credential blob cannot be decrypted on another computer. Profiles and
+roles remain queryable without exposing passwords. The optional Identity
+Access plugin manages these core tables; it does not own a second credential
+store.
 
 ## Indexes
 

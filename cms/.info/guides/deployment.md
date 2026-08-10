@@ -252,6 +252,14 @@ data/cms.sqlite.db
 
 Do not put mutable databases inside `cms.zip` or `assets.zip`.
 
+The identity credential blob, MCP token, and optional Large File Mailer SMTP
+password stored in SQLite use keys unique to the computer. Before moving a
+database, stop Mako and run the source checkout's
+`tools/reset-db-secrets.lua` with the database path in the `FUGUHUB_DB`
+environment variable. The utility creates a backup, removes these credentials,
+and returns the destination CMS to administrator bootstrap mode. A remote MCP
+agent cannot perform this offline filesystem operation.
+
 For content operations, call `getGuide` with `id="database"`. For runtime write
 behavior, call `getGuide` with `id="lsp"`.
 

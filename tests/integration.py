@@ -1074,6 +1074,38 @@ def identity_api_post(
     return code, json.loads(body)
 
 
+def verify_device_unique_identity_blob(runtime: Path, encrypted_base64: str) -> None:
+    probe = runtime / "identity-key-probe"
+    probe.mkdir(exist_ok=True)
+    (runtime / "data" / "identity-key-probe.encrypted").write_bytes(
+        base64.b64decode(encrypted_base64)
+    )
+    (probe / ".preload").write_text(
+        "local home=assert(ba.openio('home'))\n"
+        "local data=assert(ba.mkio(home,'data'))\n"
+        "local rw=require'rwfile'\n"
+        "local encrypted=assert(rw.file(data,'identity-key-probe.encrypted'))\n"
+        "local function canOpen(global)\n"
+        "   local tju=ba.tpm.jsonuser('makocms-identity',global)\n"
+        "   return tju.setdb(encrypted) and 'yes' or 'no'\n"
+        "end\n"
+        "local file=assert(data:open('identity-key-probe.result','wb'))\n"
+        "assert(file:write(canOpen(false)..','..canOpen(true)))\n"
+        "file:close()\n",
+        encoding="ascii",
+    )
+    with MakoProcess(runtime, application="identity-key-probe"):
+        pass
+    result = (runtime / "data" / "identity-key-probe.result").read_text(
+        encoding="ascii"
+    )
+    check(
+        result == "yes,no",
+        "identity credential blob did not require the device-unique TPM key: "
+        + result,
+    )
+
+
 def verify_identity_plugin(
     server: MakoProcess,
     runtime: Path,
@@ -1229,6 +1261,7 @@ def verify_identity_plugin(
           and "password" not in columns
           and "initial-password" not in serialized,
           "identity SQLite tables exposed a password")
+    verify_device_unique_identity_blob(runtime, credential_row[0])
     check(
         not (runtime / "data" / "admin-users.encrypted").exists()
         and not (runtime / "data" / "plugins" / "identity-access" / "users.encrypted").exists(),
@@ -1485,6 +1518,7 @@ def test_identity_legacy_migration() -> None:
         pass
     legacy_file = runtime / "data" / "admin-users.encrypted"
     check(legacy_file.is_file(), "legacy administrator fixture was not created")
+    legacy_encrypted = legacy_file.read_bytes()
 
     with MakoProcess(runtime) as server:
         browser = Browser(server.origin)
@@ -1494,6 +1528,9 @@ def test_identity_legacy_migration() -> None:
         check(code == 200 and b"Dashboard" in dashboard,
               "migrated legacy administrator could not log in")
     with contextlib.closing(sqlite3.connect(database_path(runtime))) as conn:
+        encrypted_base64 = conn.execute(
+            "SELECT encrypted_base64 FROM identity_credentials WHERE id=1"
+        ).fetchone()[0]
         check(conn.execute(
             "SELECT count(*) FROM identity_credentials"
         ).fetchone()[0] == 1, "legacy credentials were not migrated into SQLite")
@@ -1501,8 +1538,137 @@ def test_identity_legacy_migration() -> None:
             "SELECT count(*) FROM identity_user_roles "
             "WHERE username='legacyadmin' AND role_name='cms-admin'"
         ).fetchone()[0] == 1, "legacy administrator role was not migrated")
+    verify_device_unique_identity_blob(runtime, encrypted_base64)
     check(not legacy_file.exists(),
           "legacy external credential file remained after migration")
+
+    with contextlib.closing(sqlite3.connect(database_path(runtime))) as conn:
+        conn.execute(
+            "UPDATE identity_credentials SET encrypted_base64=? WHERE id=1",
+            (base64.b64encode(legacy_encrypted).decode("ascii"),),
+        )
+        conn.commit()
+    with MakoProcess(runtime) as rejected:
+        code, _, body = Browser(rejected.origin).request("/admin/")
+        check(
+            code == 503 and b"CMS startup failed" in body,
+            "a global-key identity blob was accepted as a live SQLite identity",
+        )
+
+
+def test_reset_db_secrets_tool() -> None:
+    check(bool(MAKO), "mako executable was not found on PATH")
+    runtime = RUNTIME_ROOT / "reset-db-secrets-tool"
+    runtime.mkdir()
+    database = runtime / "cms.sqlite.db"
+    with contextlib.closing(sqlite3.connect(database)) as conn:
+        conn.executescript(
+            """
+PRAGMA foreign_keys=ON;
+CREATE TABLE options(key TEXT PRIMARY KEY, value TEXT NOT NULL);
+CREATE TABLE identity_credentials(
+   id INTEGER PRIMARY KEY CHECK(id=1), encrypted_base64 TEXT NOT NULL
+);
+CREATE TABLE identity_profiles(username TEXT PRIMARY KEY);
+CREATE TABLE identity_roles(name TEXT PRIMARY KEY);
+CREATE TABLE identity_user_roles(
+   username TEXT NOT NULL REFERENCES identity_profiles(username) ON DELETE CASCADE,
+   role_name TEXT NOT NULL REFERENCES identity_roles(name) ON DELETE RESTRICT,
+   PRIMARY KEY(username,role_name)
+);
+CREATE TABLE identity_audit(
+   id INTEGER PRIMARY KEY, actor TEXT, action TEXT NOT NULL, target TEXT,
+   detail_json TEXT NOT NULL, created_at INTEGER NOT NULL
+);
+CREATE TABLE mailer_settings(singleton INTEGER PRIMARY KEY, enabled INTEGER NOT NULL);
+CREATE TABLE mailer_smtp_secret(
+   singleton INTEGER PRIMARY KEY, encrypted_password TEXT NOT NULL
+);
+CREATE TABLE content(id INTEGER PRIMARY KEY, title TEXT NOT NULL);
+INSERT INTO options(key,value) VALUES('mcp_token_encrypted','device-token');
+INSERT INTO identity_credentials(id,encrypted_base64) VALUES(1,'device-users');
+INSERT INTO identity_profiles(username) VALUES('old-admin');
+INSERT INTO identity_roles(name) VALUES('cms-admin');
+INSERT INTO identity_user_roles(username,role_name) VALUES('old-admin','cms-admin');
+INSERT INTO mailer_settings(singleton,enabled) VALUES(1,1);
+INSERT INTO mailer_smtp_secret(singleton,encrypted_password) VALUES(1,'device-smtp');
+INSERT INTO content(id,title) VALUES(1,'Preserved content');
+"""
+        )
+        conn.commit()
+
+    process_env = os.environ.copy()
+    process_env["FUGUHUB_DB"] = str(database)
+    result = subprocess.run(
+        [str(MAKO), "tools/reset-db-secrets.lua"],
+        cwd=ROOT,
+        env=process_env,
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        errors="replace",
+        timeout=30,
+    )
+    output = result.stdout + result.stderr
+    check(
+        result.returncode == 0 and "database secret reset completed" in output,
+        "reset-db-secrets.lua failed:\n" + output,
+    )
+
+    with contextlib.closing(sqlite3.connect(database)) as conn:
+        state = {
+            "content": conn.execute("SELECT count(*) FROM content").fetchone()[0],
+            "mcp": conn.execute(
+                "SELECT count(*) FROM options WHERE key='mcp_token_encrypted'"
+            ).fetchone()[0],
+            "credentials": conn.execute(
+                "SELECT count(*) FROM identity_credentials"
+            ).fetchone()[0],
+            "profiles": conn.execute(
+                "SELECT count(*) FROM identity_profiles"
+            ).fetchone()[0],
+            "assignments": conn.execute(
+                "SELECT count(*) FROM identity_user_roles"
+            ).fetchone()[0],
+            "smtp": conn.execute(
+                "SELECT count(*) FROM mailer_smtp_secret"
+            ).fetchone()[0],
+            "mailer_enabled": conn.execute(
+                "SELECT enabled FROM mailer_settings WHERE singleton=1"
+            ).fetchone()[0],
+            "audit": conn.execute(
+                "SELECT count(*) FROM identity_audit WHERE action='identity.reset'"
+            ).fetchone()[0],
+            "foreign_keys": conn.execute("PRAGMA foreign_key_check").fetchall(),
+        }
+    check(
+        state
+        == {
+            "content": 1,
+            "mcp": 0,
+            "credentials": 0,
+            "profiles": 0,
+            "assignments": 0,
+            "smtp": 0,
+            "mailer_enabled": 0,
+            "audit": 1,
+            "foreign_keys": [],
+        },
+        f"reset-db-secrets.lua produced unexpected state: {state}",
+    )
+
+    backups = list(runtime.glob("cms.sqlite.db.before-secret-reset-*.bak"))
+    check(len(backups) == 1, f"reset utility created {len(backups)} backups")
+    with contextlib.closing(sqlite3.connect(backups[0])) as conn:
+        check(
+            conn.execute("SELECT count(*) FROM identity_credentials").fetchone()[0]
+            == 1
+            and conn.execute(
+                "SELECT count(*) FROM options WHERE key='mcp_token_encrypted'"
+            ).fetchone()[0]
+            == 1,
+            "reset utility backup did not retain the original credential state",
+        )
 
 
 def test_identity_first_admin_bootstrap() -> None:
@@ -11890,6 +12056,7 @@ def main() -> int:
         ("identity plugin", test_identity_plugin),
         ("identity database reset", test_identity_database_reset),
         ("identity legacy migration", test_identity_legacy_migration),
+        ("database secret reset tool", test_reset_db_secrets_tool),
         ("identity first admin", test_identity_first_admin_bootstrap),
         ("command-line bootstrap", test_command_line_bootstrap),
         ("admin API reauthentication", test_admin_api_reauthentication),

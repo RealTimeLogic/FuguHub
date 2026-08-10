@@ -664,6 +664,12 @@ TPM database, writes it in the same serialized SQLite transaction as profile
 and role changes, and activates the replacement authenticator only after the
 transaction commits.
 
+The authenticator blob uses the device-unique mode of `ba.tpm.jsonuser`; it
+cannot be decrypted on another computer. The MCP token and Large File Mailer
+SMTP password likewise use keys derived from `ba.tpm.uniquekey`. Moving the CMS
+database therefore requires the offline credential reset described in the user
+manual.
+
 Password changes, disable/re-enable changes, session-policy changes, role
 removals, and deletion terminate active BAS sessions for the affected user.
 Profile changes and role additions preserve existing sessions. Dependants
