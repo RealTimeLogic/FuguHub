@@ -107,8 +107,24 @@ See [stress/README.md](stress/README.md) for local and remote load-test usage.
 - [Maintenance architecture](docs/design/summary.md)
 
 AI agents working in this source repository should start with
-[AGENTS.md](AGENTS.md). Agents connected to a deployed FuguHub instance should
-read the embedded guides through its HTTP MCP API.
+[AGENTS.md](AGENTS.md).
+
+## Advanced Development
+
+FuguHub can be used as a traditional CMS for creating pages, blog
+posts, navigation menus, and themes without writing application
+code. However, it also supports server-side application development
+using
+[Lua and LSP](https://realtimelogic.com/products/lua-server-pages/) in
+database-backed pages or the site assets application, with optional
+[HTMX and SMQ integration](https://realtimelogic.com/articles/LSP-htmx-A-Powerful-Duo-for-Embedded-Web-Apps).
+
+When developing these advanced applications with an AI agent, preferably copy
+[the FuguHub application AGENTS template](docs/templates/AGENTS.md) into the
+local project directory before starting. It teaches the agent how to connect to
+the deployed FuguHub MCP server, load the built-in guidance, choose between
+database and asset-based Lua/LSP code, and test changes safely through the HTTP
+MCP API.
 
 ## Repository Layout
 
