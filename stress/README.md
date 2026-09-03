@@ -90,3 +90,22 @@ The default client requests deflate compression and keeps one HTTP connection
 per worker. Use `--encoding identity` to compare uncompressed responses and
 `--no-keepalive` to include a new connection in every measured GET. Use
 `--csv result.csv` to save per-request timings.
+
+## SQLite WAL Comparison
+
+The WAL comparison keeps FuguHub's dedicated writer thread and transaction
+model unchanged. It varies only SQLite's persistent journal mode, then mixes
+concurrent public GET requests with repeated page updates through the real
+admin HTMX endpoint:
+
+```powershell
+.\create-stress-deploy.cmd
+python .\stress\sqlite-wal-test.py
+```
+
+The test clones `deploy-stress` beneath `.test-runtime/sqlite-wal`, rotates the
+mode order between rounds, rejects HTTP or SQLite failures, and reports median
+GET throughput plus read and write latency. It compares rollback journaling,
+WAL with SQLite's default synchronous setting, and WAL with
+`synchronous=NORMAL`. The latter is injected only into the cloned test archive;
+the production database and CMS database module are not modified.
