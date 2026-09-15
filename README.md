@@ -25,10 +25,15 @@ easiest way to get started is with the
 
 ## Quick Start
 
-FuguHub requires Mako Server with BAS 5840 or newer.
+On Windows, the easiest way to get started is to install
+[Mako Server Developer Edition from the Microsoft Store](https://apps.microsoft.com/detail/9nqr6ksk077k).
+It provides Mako Server and a ready-to-run Developer Edition with FuguHub,
+Xedge, LSP-Claw, and MQTT tools. Use the
+[first-start credential procedure](#initialize-all-mako-developer-edition-credentials)
+before enabling remote access.
 
-Install Mako Server and make sure `mako` is on `PATH`, then run from the
-repository root:
+For a manual source checkout, install Mako Server and make sure `mako` is on
+`PATH`, then run from the repository root:
 
 ```bat
 mako -l::cms
@@ -37,15 +42,113 @@ mako -l::cms
 Open `http://localhost/admin/`. FuguHub creates `data/cms.sqlite.db` and its
 initial schema automatically.
 
-For a public first startup, create the administrator and optionally enable MCP
-from the command line:
+For a standalone FuguHub first startup, create the administrator and optionally
+enable MCP from the command line:
 
 ```bat
-mako -l::cms -credentials admin:choose-a-strong-password -token choose-a-long-random-token
+mako -l::cms -credentials siteowner:choose-a-strong-password -token choose-a-long-random-token
 ```
 
 Command-line secrets may appear in shell history and process listings. Use
 these options only for the first startup and restrict access to the host.
+
+## Security
+
+FuguHub is both a content-management system and a server-side application
+environment. Treat access to CMS administration and the Model Context Protocol
+(MCP) interface as code-deployment access, not only as permission to edit text.
+
+Before exposing FuguHub to an untrusted network:
+
+- Prefer command-line initialization of the administrator credentials and MCP
+  token on the first startup. This initializes the new database without
+  requiring browser-based administrator setup. If you start without these
+  options, keep the server restricted to the local computer or a trusted
+  network until you create the administrator through the browser.
+- Use a long, unique password and a non-obvious administrator username. Avoid
+  common names such as `admin` and `root`. A less predictable username does not
+  replace a strong password.
+- If MCP is enabled, generate a long, random bearer token. Store it as a secret,
+  never commit it to source control, and replace it if it may have been exposed.
+- Use HTTPS and restrict access to the administration and MCP endpoints where
+  the deployment permits it.
+- Give administrative and MCP credentials only to people and agents trusted to
+  deploy application code.
+
+See the [User Manual](docs/FuguHub-User-Manual.md) for administrator bootstrap,
+MCP configuration, identity storage, and deployment guidance.
+
+### Initialize all Mako Developer Edition credentials
+
+The complete Mako Developer Edition includes FuguHub and other embedded
+applications. On the first startup, you can initialize the same administrator
+username and password and the same MCP bearer token for all included
+applications. Open Command Prompt in the directory containing `mako` and run:
+
+```bat
+mako -credentials username:password -token XjTi57sCSQgHyUrPrMuL59GO7iauxjqn
+```
+
+Replace all three example values with private, unpredictable values. The token
+must be at least 16 bytes. Each application imports the supplied values into
+its own authenticator and retains its own authorization state. Existing
+credentials are not replaced.
+
+This command avoids leaving the embedded applications open for interactive
+credential setup. Command-line secrets may still be visible in Command Prompt
+history or process information, so run it only on a controlled host during
+initialization. Before enabling remote access, verify administrator
+authentication and bearer-token authentication for every enabled application.
+
+See [Mako Developer Edition security notes](https://makoserver.net/documentation/developer-package/#security)
+for the complete package behavior, including how imported secrets are protected
+and why they cannot be transferred to another computer.
+
+### Trusted Lua application development
+
+The ability to execute server-side Lua is intentional. Both pages stored in the
+SQLite database and files in the site assets application can use
+[Lua Server Pages (LSP)](https://realtimelogic.com/products/lua-server-pages/).
+This turns FuguHub from a traditional CMS into a managed web-application
+environment where content, application logic, browser interfaces, real-time
+communication, and persistent data can run together.
+
+Because FuguHub runs on Mako Server, application code can use the protocol
+libraries and APIs supplied by Mako, including OPC UA, Modbus, MQTT, SMQ, HTTP,
+WebSockets, and database APIs. A FuguHub application can therefore implement a
+working industrial command center that presents live telemetry, processes
+alarms, issues authorized commands, and communicates with industrial devices.
+The application remains responsible for authenticating users, authorizing each
+operation, validating commands, and protecting the connected device network.
+
+Only trusted administrators and developer-operators should create or modify
+executable LSP. Static pages should use HTML render mode unless server-side
+application logic is required.
+
+### Context for reports about the original FuguHub
+
+Search results may show
+[CVE-2023-24078](https://nvd.nist.gov/vuln/detail/CVE-2023-24078), which names
+FuguHub 8.1 and earlier, as well as a separate public demonstration against
+[FuguHub 8.4](https://github.com/SanjinDedic/FuguHub-8.4-Authenticated-RCE-CVE-2024-27697).
+These reports concern the original FuguHub product, not the Mako Server-based
+CMS in this repository.
+
+The published demonstrations create or use an administrator account and then
+use administrator-controlled file or page editing to deploy executable LSP.
+On a correctly configured installation, this requires administrative access.
+An unconfigured installation that exposes first-use administrator creation to
+an untrusted network is not protected and must be configured before public
+access.
+
+The reports demonstrate the impact of obtaining code-deployment credentials,
+but their short descriptions do not explain that trusted administrators were
+intentionally allowed to deploy server-side Lua. They should not be interpreted
+as unauthenticated code injection into an already configured site. Real Time
+Logic has operated its public website on the original FuguHub for more than 15
+years without a known compromise, but that operating history does not replace
+strong credentials, HTTPS, restricted administrative access, and normal
+application-security practices.
 
 ## Build Deployments
 
@@ -103,6 +206,7 @@ See [stress/README.md](stress/README.md) for local and remote load-test usage.
 
 - [User Manual](docs/FuguHub-User-Manual.md)
 - [Lua API](docs/FuguHub-API.md)
+- [Lua FastMCP framework](docs/FastMCP.md)
 - [Benefits and performance overview](docs/FuguHub-benefits.md)
 - [Maintenance architecture](docs/design/summary.md)
 
