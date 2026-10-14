@@ -7,7 +7,7 @@
 /assets/
 /assets-*/
 /devel-docs/
-
+/tests/
 /.locks/
 /mako.conf
 
