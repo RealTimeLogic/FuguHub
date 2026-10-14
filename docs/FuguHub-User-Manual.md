@@ -6,7 +6,7 @@ included plugins. Developer-facing Lua APIs are documented separately in
 
 ## Getting Started
 
-FuguHub requires Mako Server with BAS 5840 or newer. Startup stops with a
+FuguHub requires Mako Server with BAS 6017 or newer. Startup stops with a
 version error before installing the application when the BAS library is older.
 
 ### Choose a Package

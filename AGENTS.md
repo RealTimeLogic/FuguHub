@@ -46,6 +46,8 @@ Then select the task-specific skill:
 - [FuguHub Lua API](docs/FuguHub-API.md): human-facing reference for the public
   `app`, database, event, page-state, assets preload, module-loader, restart,
   LSP, theme, and optional plugin APIs.
+- [Lua FastMCP](docs/FastMCP.md): maintainer reference for the vendored MCP
+  component framework, schema validation, dispatch, and HTTP transports.
 - [FuguHub User Manual](docs/FuguHub-User-Manual.md): operator-facing setup and
   workflows for installation, CMS administration, MCP, Identity and Access,
   File Services, the SMTP/Large File Mailer, and multi-domain deployment.

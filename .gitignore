@@ -6,6 +6,8 @@
 /data/
 /assets/
 /assets-*/
+/devel-docs/
+
 /.locks/
 /mako.conf
 

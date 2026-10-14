@@ -1,6 +1,6 @@
 local basVersion = ba.version()
-if basVersion < 5840 then
-   error("FuguHub requires BAS 5840 or newer; running BAS " .. basVersion)
+if basVersion < 6017 then
+   error("FuguHub requires BAS 6017 or newer; running BAS " .. basVersion)
 end
 
 local app = app or {}

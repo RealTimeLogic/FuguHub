@@ -76,7 +76,9 @@ CMS-private modules must not load each other with global `require`.
 Stable FastMCP code is process-level and uses `require`. It is exposed through
 a loader rooted at `cms/lib/.lua/fastmcp/`. The `pathio` module creates that
 nested IO from either a directory application or `cms.zip`; a ZIP cannot create
-the required nested IO with `ba.mkio()` alone.
+the required nested IO with `ba.mkio()` alone. FastMCP uses BAS native JSON
+array markers to preserve empty MCP lists as JSON arrays. Its component and
+transport contract is documented in [FastMCP.md](../FastMCP.md).
 
 The engine opens Mako home IO for sibling runtime resources:
 
