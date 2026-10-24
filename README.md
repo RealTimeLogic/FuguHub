@@ -125,6 +125,11 @@ Only trusted administrators and developer-operators should create or modify
 executable LSP. Static pages should use HTML render mode unless server-side
 application logic is required.
 
+#### Learn How FuguHub Works
+
+Read the [full article](https://realtimelogic.com/articles/LSP-htmx-A-Powerful-Duo-for-Embedded-Web-Apps), which explains how JavaScript and lightweight server rendering work together, or jump directly to [how FuguHub works](https://realtimelogic.com/articles/LSP-htmx-A-Powerful-Duo-for-Embedded-Web-Apps#FuguHub).</p>
+
+
 ### Context for reports about the original FuguHub
 
 Search results may show
