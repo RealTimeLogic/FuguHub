@@ -1,231 +1,166 @@
 # FuguHub Benefits
 
-FuguHub combines a compact content-management system with the native Lua,
-LSP, virtual-file-system, SQLite, HTMX, SMQ, and security capabilities of Mako
-Server. It is designed for dynamic websites and real-time web applications
-that must run efficiently on anything from a development computer to
-resource-constrained embedded hardware.
+FuguHub is a content management system (CMS) that combines website publishing
+with Lua application development on Mako Server. Use it for a public website,
+a customer portal, or a live device dashboard, with content, application logic,
+and data on a computer you control. Manage the site in your browser or connect
+an AI agent to help build and maintain it.
 
-Its integrated SMQ messaging layer is particularly valuable for embedded
-systems. A CMS page can become a live device interface with telemetry,
-commands, events, and RPC without adding a separate WebSocket service,
-message broker, or large browser framework.
+For a short deployment walkthrough, start with the
+[README](../README.md#get-started). The [User Manual](FuguHub-User-Manual.md)
+covers setup and everyday administration.
+
+## Compact, Self-Contained Deployment
+
+Mako runs the web server, Lua application logic, SQLite storage, and Simple
+Message Queue (SMQ) messaging together. For a website or connected application,
+that means fewer services to install and manage. The CMS does not need a
+separate database server.
+
+FuguHub's default theme and browser libraries are served locally, so the site
+does not depend on a public content delivery network (CDN). This is useful for
+private networks, local servers, and embedded Linux devices.
+
+The CMS package, site assets, themes, and writable data are kept separate. You
+can update the engine or change the presentation while keeping your site's
+content and application files in their own locations. See
+[package choices](FuguHub-User-Manual.md#choose-a-package) and the
+[runtime directory](FuguHub-User-Manual.md#runtime-directory) for the layout.
+
+## AI-Native CMS Administration
+
+Describe a new page, a navigation change, or a site feature to an AI agent,
+then let it work with the running CMS through the authenticated Model Context
+Protocol (MCP) interface.
+
+An agent can help you draft and revise pages, update menus, develop a theme,
+transfer content between sites, or investigate application errors. It can do
+this through MCP without direct access to the host filesystem or database.
+The CMS supplies guides for its deployed API, so the agent can work from the
+capabilities of your installation.
+
+Content creation starts with drafts. You decide when to publish, activate a
+theme, or install executable application code. These are administration
+capabilities, so give access only to trusted people and agents. Follow
+[MCP Setup](FuguHub-User-Manual.md#mcp-setup) to connect a client and understand
+the access it receives.
+
+## More Than A Traditional CMS
+
+Start with ordinary pages and blog posts, then add forms, customer portals,
+or device controls with Lua Server Pages (LSP). Server-side Lua can combine
+managed content with database queries, application services, and live data.
+Application code can also use Mako's MQTT, OPC UA, Modbus, and other protocol
+APIs to connect the browser interface to equipment and services.
+
+Your site's `assets/` directory holds more than images and styles. It can also
+contain LSP endpoints and private Lua modules, keeping custom application code
+separate from the CMS engine. Reusable services can support several pages and
+themes. This makes it possible to grow a site into an application without
+maintaining a separate backend for those features.
+
+Custom applications require Lua and browser development, whether you write
+the code yourself or work with an AI agent. See
+[Site Assets and LSP Applications](FuguHub-User-Manual.md#site-assets-and-lsp-applications)
+for the application layout and the [Lua API](FuguHub-API.md) for programming
+details.
+
+## Embedded Real-Time Applications With SMQ
+
+A device interface needs to react when equipment changes state. FuguHub
+combines two optional features for this: HTMX updates parts of the page during
+navigation and browser requests, while SMQ delivers asynchronous events from
+the server or connected devices.
+
+For example, a dashboard can show current measurements, display an alarm as
+it arrives, and let an operator send a command without reloading the page.
+Application code supplies the device integration and decides which users may
+perform each action.
+
+FuguHub manages the SMQ broker and browser connection in the same Mako
+process. Its page APIs handle subscriptions, remote procedure calls (RPC),
+cleanup during navigation, and reconnection. You can build these interfaces
+with server-rendered HTML and focused JavaScript, without introducing a large
+browser framework or a separate messaging service for SMQ.
+
+Enable HTMX before enabling SMQ, and use a theme that supports HTMX navigation.
+The manual covers the [site settings](FuguHub-User-Manual.md#public-site-settings).
+For implementation, see the [SMQ API](FuguHub-API.md#smq-real-time-api).
+
+## Add Services As Your Site Grows
+
+The full package includes services for sites that need more than publishing:
+
+| Service | What it adds |
+| --- | --- |
+| [Identity and Access](FuguHub-User-Manual.md#identity-and-access) | Manage user accounts, profiles, and roles. |
+| [File Services](FuguHub-User-Manual.md#file-services) | Give authorized users browser-based access to selected folders. |
+| [Large File Mailer](FuguHub-User-Manual.md#smtp-and-large-file-mailer) | Send email and share large files through download links. |
+
+For several related sites, [multiple-domain hosting](FuguHub-User-Manual.md#advanced-multiple-domains)
+provides shared identity with separate content databases. You can also install
+and activate [themes](FuguHub-User-Manual.md#themes) without rebuilding the CMS
+package or restarting Mako.
+
+## Purpose-Built Runtime Design
+
+FuguHub uses Mako's web, Lua, storage, and messaging facilities directly.
+Bounded in-memory caches reduce repeated database reads, and a dedicated
+SQLite writer serializes writes. Responses are compressed, while browser
+cache validation avoids downloading unchanged resources. The
+[performance design](design/performance.md) explains these choices for
+maintainers.
 
 ## High Dynamic Throughput
 
-The repository stress test measures complete CMS responses rather than static
-files. Its ten-page corpus contains five normal pages and five blog posts,
-ranging from approximately 2 KiB to 512 KiB. Five entries execute stored LSP
-and Lua on every request. The CMS still renders and compresses each response;
-it does not use a full-page response cache.
+The repository includes a repeatable stress test for complete CMS responses.
+Its ten-page workload contains five pages and five blog posts, ranging from
+approximately 2 KiB to 512 KiB. Five entries execute LSP and Lua on every
+request. Content data is cached, but each response is still rendered and
+compressed; the test does not serve pre-rendered pages from a full-page cache.
 
-On an Intel Core i7-1165G7 with four physical cores and eight logical
-processors, optimized FuguHub build 5839 produced:
+The recorded optimization baseline used **Mako build 5839** on a Windows
+computer with an Intel Core i7-1165G7, four physical cores, and eight logical
+processors:
 
 | Measurement | Result |
 | --- | ---: |
 | Throughput | **793.98 requests/second** |
-| Average latency at concurrency 32 | **40.19 ms** |
+| Average latency at 32 concurrent requests | **40.19 ms** |
 | Requests | 10,000 |
 | Failures | 0 |
 
-The load generator and FuguHub shared the same Windows computer, so the client
-also consumed part of the available CPU. Published content rows, menus,
-redirects, and category assignments were cached in memory, while LSP
-execution, theme rendering, and deflate compression still occurred for every
-request.
+FuguHub and the load generator ran on the same computer. Connections were
+persistent and responses used deflate compression. These are recorded results
+for that build and workload, not a capacity guarantee for another site or
+device. Use the current manual's runtime requirements when deploying.
+
+The [performance report](design/performance.md) records the optimization
+stages and cache behavior. The [stress-test guide](../stress/README.md) explains
+how to measure your own deployment. Test with representative content,
+application code, and target hardware before sizing a production system.
 
 ### Indicative WordPress Comparison
 
-A 2025 Kinsta benchmark measured a default WordPress 6.8 installation with no
-additional plugins or page-caching layer. WordPress 6.8 on PHP 8.5 produced
-148.30 requests/second on a Google Cloud VM with 30 vCPUs. The test used
-Nginx, PHP-FPM with OPcache, MariaDB, concurrency 15, and a 48.6 KiB response.
+Published WordPress results provide context, but the tests used different
+hardware and workloads. [Kinsta's December 2025 PHP benchmark](https://kinsta.com/blog/php-benchmarks/)
+reported 148.30 requests/second for WordPress 6.8.0 on PHP 8.5, using a
+30-vCPU cloud VM, 15 concurrent requests, and a roughly 48.6 KiB response.
+Kinsta designed that test to compare PHP versions within each CMS.
 
-Against that published result, the measured FuguHub throughput is:
-
-```text
-793.98 / 148.30 = 5.35
-```
-
-FuguHub therefore delivered approximately **5.4 times the uncached dynamic
-throughput** in these separate tests, despite running on a four-core mobile
-processor and sharing it with the load generator.
-
-A simple allocation calculation gives approximately 99.25 FuguHub requests
-per second per local logical processor and 4.94 WordPress requests per second
-per allocated cloud vCPU, suggesting about a 20x CPU-efficiency difference.
-That figure is directional, not a controlled capacity measurement: cloud
-vCPUs and local hardware threads are not equivalent, and Kinsta's concurrency
-of 15 may not have exercised all 30 vCPUs.
-
-CPU generation materially affects WordPress performance, but does not explain
-the measured gap. Intel has reported up to 1.51x more WordPress throughput per
-vCPU on newer GCP processors. Even applying that entire improvement to the
-Kinsta result would produce about 224 requests/second, leaving the local
-FuguHub result approximately 3.5x higher.
-
-These figures are an informed estimate, not an apples-to-apples benchmark.
-The response sizes, operating systems, databases, server configurations, and
-test tools differ. The local FuguHub responses averaged approximately 3 KiB
-after deflate compression, whereas Kinsta reported a 48.6 KiB WordPress
-response. Kinsta also states that its PHP-version benchmark was not designed
-as a cross-CMS comparison. A definitive comparison requires running both
-products on the same hardware with the same content and load generator.
-WordPress can serve much higher request rates through a full-page server or
-CDN cache, but such requests bypass WordPress, PHP, and the database and
-therefore measure the cache rather than dynamic CMS execution.
-
-Sources:
-
-- [Kinsta PHP and CMS benchmarks](https://kinsta.com/blog/php-benchmarks/)
-- [Intel WordPress throughput-per-vCPU study](https://cdrdv2-public.intel.com/787232/wordpress-gcp-c3-n2-vms.pdf)
-- [Local FuguHub performance design](design/performance.md)
-
-## AI-Native CMS Administration
-
-FuguHub includes a Streamable HTTP MCP server so an AI agent can work with a
-deployed CMS through a documented, bounded API rather than direct filesystem
-or database access.
-
-The MCP API supports:
-
-- discovering CMS capabilities, limits, guides, examples, and workflow
-  prompts;
-- finding, validating, creating, updating, copying, publishing, and deleting
-  pages and blog posts;
-- managing categories, menus, redirects, CMS settings, and cache state;
-- creating and modifying site assets, including static files, LSP endpoints,
-  and private Lua modules;
-- creating persistent theme drafts, validating complete themes, installing
-  theme ZIPs, and activating or replacing themes without restarting Mako;
-- exporting selected content and transferring it directly between FuguHub
-  servers using immutable ZIP snapshots and one-use tickets;
-- inspecting health, schema information, SQLite integrity, and bounded BAS
-  runtime trace output;
-- restarting the site-owned assets application after trusted Lua changes,
-  without restarting the Mako Server process.
-
-Content creation defaults to drafts. Publishing, executable LSP, destructive
-operations, theme installation and activation, and transfer conflicts require
-explicit decisions. Optimistic timestamps and SHA-256 identities reject stale
-updates. The MCP bearer token is encrypted in SQLite with a key derived from
-`ba.tpm.uniquekey` and is never returned through MCP.
-
-The operational documentation is embedded in the CMS package and exposed
-through MCP. An agent can therefore learn the exact API and development
-patterns from a remote `cms.zip` deployment without host filesystem access.
-
-## More Than A Traditional CMS
-
-FuguHub pages can contain trusted LSP and Lua, making the CMS a host for
-server-side applications as well as static content.
-
-The site-owned `assets/` application can contain:
-
-- public images, CSS, JavaScript, downloads, and other static resources;
-- directly addressable LSP and HTMX fragment endpoints;
-- private Lua modules loaded through the application-specific `assetsreq`
-  loader;
-- an optional `.preload` that initializes reusable services and shared
-  application state;
-- an `onunload` lifecycle function for timers, subscriptions, VFS nodes, and
-  other resources.
-
-Database LSP pages, asset LSP files, Lua modules, and theme templates share the
-same public application table. Site code can expose services once in
-`assets/.preload` and use them throughout the application.
-
-## Embedded Real-Time Applications With SMQ
-
-Optional HTMX navigation lets FuguHub return server-rendered HTML fragments
-without requiring a JSON API or a client-side application framework. This
-reduces browser code while preserving clean URLs and normal full-page
-navigation.
-
-When HTMX is enabled, SMQ can add a persistent real-time connection managed by
-the theme shell. The CMS owns the broker and browser connection lifecycle,
-while application code registers Lua services and page-scoped behavior. This
-makes it straightforward to connect CMS-managed interfaces to devices,
-industrial equipment, sensors, controllers, and edge applications.
-
-Page-scoped APIs support:
-
-- publish and subscribe events;
-- direct peer messages;
-- browser-to-server RPC;
-- automatic cleanup during HTMX navigation;
-- reconnection, subscription restoration, and repeatable page initialization
-  after a server or network interruption.
-
-Typical embedded applications include:
-
-- live telemetry and equipment-status dashboards;
-- browser controls for device configuration and operation;
-- alarms, notifications, and asynchronous state changes;
-- request/response commands implemented as SMQ RPC;
-- direct browser-to-device or peer messaging where permitted by the
-  application security policy.
-
-The same Mako process can host managed content, Lua application logic, the SMQ
-broker, LSP endpoints, and browser assets. This reduces deployment complexity
-and avoids coordinating an external broker or a separate real-time backend.
-HTMX handles server-rendered navigation and partial updates, while SMQ handles
-state changes that originate asynchronously from a device or server.
-
-## Compact, Self-Contained Deployment
-
-FuguHub keeps responsibilities separate:
-
-```text
-cms.zip       packaged CMS engine and built-in fallback theme
-themes/       optional directory or ZIP-packaged themes
-assets/       development site application
-assets.zip    optional packaged site application
-data/         writable CMS SQLite database and optional plugin data
-```
-
-The engine, built-in default theme, HTMX runtime, and SMQ integration are local;
-the default deployment does not depend on a public CDN. External themes take
-precedence when installed. If no database exists, FuguHub creates the schema,
-default settings, primary menu, and editable 404 page automatically.
-
-The same package can run at the server root or below a named base URI. Themes,
-content, assets, admin pages, MCP, HTMX, SMQ, redirects, and preview links use
-mount-aware URL helpers.
-
-## Purpose-Built Runtime Design
-
-FuguHub uses Mako and BAS facilities directly instead of layering a CMS over a
-separate web server, process manager, language runtime, and database server.
-Its runtime design includes:
-
-- application-private Lua module loading for CMS and site code, enabling Mako
-  application hot swapping without global `require` state;
-- a dedicated SQLite writer thread that serializes all CMS and application
-  writes to avoid competing SQLite writers;
-- bounded in-memory read caches with explicit invalidation after admin, MCP,
-  theme, settings, or application mutations;
-- persistent virtual-page tables for database-backed LSP;
-- native VFS composition for engine routes, site assets, themes, admin
-  authentication, editable 404 handling, and named application mounts;
-- automatic response compression and browser cache validation;
-- device-unique TPM-backed administrator authentication, encrypted MCP
-  configuration, and SMTP credentials.
+Those conditions differ from the FuguHub test above. The figures do not
+establish a relative speedup or CPU-efficiency advantage. For a useful product
+comparison, run both systems on the same hardware with equivalent content,
+application behavior, compression, caching, and load conditions.
 
 ## Where FuguHub Fits
 
-FuguHub is a strong fit when the priorities are:
+FuguHub is a good fit for teams that want to build and control an application
+with Mako and Lua while managing its content through a CMS. If your project
+depends on a broad selection of third-party themes, plugins, or managed hosting
+options, weigh those requirements alongside the integrated runtime and
+application-development features described here.
 
-- high dynamic throughput on limited CPU and memory;
-- embedded, edge, appliance, or local-server deployment;
-- AI-assisted administration through a first-class MCP API;
-- Lua and LSP application logic integrated with managed content;
-- real-time browser communication without a large client framework;
-- compact ZIP deployment with SQLite rather than a multi-service stack;
-- direct control over themes, navigation, routing, assets, and application
-  lifecycle.
-
-WordPress has a much larger plugin, theme, hosting, and editorial ecosystem.
-FuguHub instead emphasizes a small, controllable runtime for developers
-building efficient dynamic and real-time applications with Mako Server.
+Ready to try it? Follow [Get Started](../README.md#get-started), then use the
+manual to [create your first page](FuguHub-User-Manual.md#create-your-first-page)
+or [connect an AI agent](FuguHub-User-Manual.md#mcp-setup).
