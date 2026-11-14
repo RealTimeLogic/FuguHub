@@ -826,8 +826,8 @@ Category records contain:
 | `assignmentCount` | number | Total assignments, including unpublished content. |
 | `publishedPostCount` | number | Assigned published posts. |
 
-The count fields are populated by `categories()`. Single-category and
-per-content lookups do not calculate counts and return zero in those fields.
+The count fields are populated by `categories()` and `category()`. Per-content
+lookups do not calculate counts and return zero in those fields.
 
 ### `app.cms:category(slugOrId)`
 
@@ -896,7 +896,11 @@ write connection. All runtime writes, including writes to application-specific
 tables, must use `app.db.writeSync()` or `app.db.writeAsync()`. Opening an
 independent writer from request code can cause SQLite `BUSY` failures.
 
-Every CMS connection enables `PRAGMA foreign_keys=ON`.
+Connections opened by these helpers enable `PRAGMA foreign_keys=ON` and set a 2,000ms
+SQLite lock wait. The writer retains an `IMMEDIATE` transaction reservation
+between jobs. Transaction completion and the next reservation use separate
+SQL statements so a saved change is never reported as unsaved merely because
+the next reservation failed.
 
 ### `app.db.openRead()`
 
@@ -963,20 +967,37 @@ local id = app.db.writeSync(function(conn)
 end)
 ```
 
-If the callback raises an error, the CMS rolls back and propagates the error.
+If the callback or commit raises an error, the CMS rolls back and propagates
+the error. A failed rollback or failed write-reservation recovery closes the
+connection and disables further writes until the CMS application restarts.
 LuaSQL commonly reports SQL errors as `nil, message`; check and raise those
 errors explicitly. Do not manually commit or roll back the CMS connection.
 Returning `nil, message` alone does not trigger rollback; it is a normal Lua
 return. The same rule applies to `writeAsync`.
 
-`writeSync` blocks the calling thread until the writer callback completes.
+`writeSync` preserves its synchronous return/error contract. Each job has a
+5,000ms deadline starting when it is queued. An expired queued job is skipped.
+If the deadline expires during its callback, the caller receives an error and
+the writer rolls back when the callback returns; the job cannot commit later.
+Keep callbacks short and limited to database work.
+
+Once commit or rollback has started, the caller waits for the actual transaction
+outcome and ownership recovery. Each SQLite lock wait is still limited to
+2,000ms. This can extend the call beyond the 5,000ms deadline. These limits do
+not interrupt arbitrary native code, a non-yielding Lua loop, or stalled storage.
+A synchronous call directly from the writer's own callback raises immediately
+instead of waiting for itself.
 
 ### `app.db.writeAsync(writeFn, resultFn)`
 
 Queues the required function `writeFn(conn)` and returns no values without
 waiting for the write. Its connection and transaction rules are the same as
 `writeSync`. The optional `resultFn` is a function called on the writer thread
-after commit or rollback.
+after commit or rollback. It uses the same 5,000ms pre-commit deadline as
+`writeSync`. Expired queued jobs report failure when the writer reaches them;
+the result callback still runs on the writer thread, exactly once. Closing or
+disabling the writer also reports failure through the result callback. An error
+while submitting to the native thread can raise synchronously.
 
 With the `app_events` table from the preceding example:
 
@@ -990,7 +1011,7 @@ app.db.writeAsync(function(conn)
    return changed
 end, function(runtimeOk, result)
    if not runtimeOk then
-      mako.log(tostring(result), "my-app")
+      trace("Application database write failed:", tostring(result))
    end
 end)
 ```
@@ -1007,9 +1028,16 @@ three values returned by `writeFn`, including any `nil` values. Return values
 from `resultFn` are ignored. A result-callback error is logged after the
 transaction has already completed.
 
-If no result callback is supplied, FuguHub logs execution failures and a falsy
-first result with `mako.log(..., "cms-db")`. Return a truthy first result when a
-write succeeds and has no other result to report.
+If no result callback is supplied, FuguHub logs execution failures. A falsy first
+result is logged explicitly as a committed transaction with a falsy result;
+it does not imply rollback. Return a truthy first result when a write succeeds
+and has no other result to report. Writer failures go to local trace and to
+`mako.log`, which uses Mako's configured logging service.
+
+For HTTP work completed by an asynchronous callback, create a
+`response:deferred()` object in the request handler and finish that response in
+`resultFn`. Do not retain the normal request or response object or poll for the
+callback from the request handler.
 
 ### `app.db.thread`
 
@@ -1029,6 +1057,14 @@ writer or block unrelated requests.
 Use the normal request thread for HTTP calls whose result is needed by the
 response. Use `response:deferred()` only when another thread will complete the
 response.
+
+The engine owns `app.db.acquireWriteOwner()` and `app.db.close()`; both take no
+arguments. Ownership acquisition returns boolean `true` or raises on failure.
+Close rejects new writes, cancels queued writes, and releases the connection on
+its writer thread. It returns boolean `true` after cleanup, or `nil, error`
+where `error` is a string. If cleanup is not complete within 5,000ms, it stays
+queued and retains the native thread until it runs. Repeated closes share that
+same cleanup job; a closed writer never reopens itself.
 
 ## CMS Event API
 

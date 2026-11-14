@@ -277,6 +277,14 @@ CREATE INDEX IF NOT EXISTS idx_identity_audit_created
   This also permits a page and a post to use the same stored path.
 - Public menus filter out `menu_items.hidden=1`.
 - Runtime writes must use the CMS write helper and its SQLite writer thread, exposed as `app.db.thread`.
+- SQLite lock waits are limited to 2,000ms. Writer jobs expire after 5,000ms
+  before commit; expired jobs cannot commit later. Once transaction completion
+  begins, its actual outcome is returned. See the [SQLite API](../FuguHub-API.md#sqlite-api)
+  for deadline and callback limits.
+- Callback and commit failures roll back before the next job. Rollback or
+  reservation-recovery failure disables the writer until application restart.
+  The successful commit of one job is distinct from acquiring the next
+  `IMMEDIATE` reservation.
 - Every read and writer connection enables `PRAGMA foreign_keys=ON`; foreign-key
   cascades are part of the runtime contract.
 

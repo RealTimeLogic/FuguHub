@@ -9,6 +9,7 @@
    var csrf = token.value;
    var state;
    var selectedRoleName;
+   var busy = false;
 
    function el(tag, options) {
       var node = document.createElement(tag);
@@ -32,17 +33,22 @@
       return parent;
    }
 
-   function field(label, input) {
-      return add(el("div", { className: "field" }),
-         el("label", { text: label }), input);
-   }
+   var field = window.FuguHubAdmin.field;
 
    function button(text, className, fn) {
       var node = el("button", {
          type: "button", text: text, className: className || ""
       });
-      node.addEventListener("click", fn);
+      node.addEventListener("click", function () { if (!busy) fn(); });
       return node;
+   }
+
+   function submitButton(form, text, action) {
+      form.addEventListener("submit", function (event) {
+         event.preventDefault();
+         if (!busy) action();
+      });
+      return el("button", { type: "submit", text: text });
    }
 
    function normalize(payload) {
@@ -64,20 +70,35 @@
       var target = document.getElementById("file-service-message");
       if (!target) return;
       target.textContent = text || "";
+      target.setAttribute("aria-label", target.textContent);
       target.className = "file-service-message" + (error ? " error" : "");
+      target.setAttribute("role", error ? "alert" : "status");
+      if (!busy) {
+         target.tabIndex = -1;
+         target.focus({ preventScroll: true });
+         target.scrollIntoView({ block: "nearest" });
+      }
    }
 
    function request(fields) {
       fields._csrf = csrf;
       var body = new URLSearchParams();
       Object.keys(fields).forEach(function (key) { body.set(key, fields[key]); });
-      message("Saving...", false);
+      busy = true;
+      var controls = Array.from(root.querySelectorAll("button:enabled, input:enabled, select:enabled"));
+      controls.forEach(function (node) { node.disabled = true; });
+      root.setAttribute("aria-busy", "true");
+      message(fields.action === "delete-acl" ? "Deleting..." : "Saving...", false);
       return fetch("api/", {
          method: "POST",
          credentials: "same-origin",
          headers: { "Content-Type": "application/x-www-form-urlencoded" },
          body: body.toString()
-      }).then(read);
+      }).then(read).finally(function () {
+         busy = false;
+         controls.forEach(function (node) { node.disabled = false; });
+         root.removeAttribute("aria-busy");
+      });
    }
 
    function read(response) {
@@ -107,6 +128,13 @@
       var timeout = el("input", {
          name: "session_timeout", type: "number", value: settings.sessionTimeout
       });
+      [uploads, locks, timeout].forEach(function (input) {
+         input.min = "1";
+         input.required = true;
+      });
+      uploads.max = "10000";
+      locks.max = "100000";
+      timeout.max = "86400";
       add(grid,
          field("Base URL (mako.conf)", el("output", {
             text: settings.baseUrl
@@ -116,7 +144,7 @@
          })),
          field("Maximum uploads", uploads),
          field("Maximum locks", locks),
-         field("Session URL timeout", timeout)
+         field("Session URL timeout (seconds)", timeout, "How long a temporary file-access URL remains valid.")
       );
       form.appendChild(grid);
       var flags = el("div", { className: "file-service-flags" });
@@ -132,10 +160,10 @@
          document.createTextNode("Case-sensitive paths"));
       add(flags, enabledLabel, sensitiveLabel);
       form.appendChild(flags);
-      form.appendChild(button("Save Settings", "", function () {
+      form.appendChild(submitButton(form, "Save Settings", function () {
          request(collect(form, "save-settings")).then(function (payload) {
             state = payload;
-            render();
+            render("settings");
             message("Settings saved.", false);
          }).catch(function (error) { message(error.message, true); });
       }));
@@ -188,10 +216,10 @@
       add(flags, add(el("label"), enabled, document.createTextNode("Enabled")));
       form.appendChild(flags);
       var actions = el("div", { className: "file-service-actions" });
-      actions.appendChild(button(acl ? "Save" : "Add path", "", function () {
+      actions.appendChild(submitButton(form, acl ? "Save" : "Add path", function () {
          request(collect(form, "save-acl")).then(function (payload) {
             state = payload;
-            render();
+            render("access");
             message("File access saved.", false);
          }).catch(function (error) { message(error.message, true); });
       }));
@@ -201,7 +229,7 @@
             request({ action: "delete-acl", id: String(acl.id) })
                .then(function (payload) {
                   state = payload;
-                  render();
+                  render("access");
                   message("File access removed.", false);
                }).catch(function (error) { message(error.message, true); });
          }));
@@ -211,7 +239,7 @@
    }
 
    function roleAccessSection() {
-      var access = el("section", { className: "file-service-section" });
+      var access = el("section", { id: "file-service-access", className: "file-service-section" });
       access.appendChild(el("h2", { text: "File Access" }));
       if (!state.roles.length) {
          access.appendChild(el("p", {
@@ -233,11 +261,12 @@
          roleSelect.appendChild(option);
       });
       roleSelect.addEventListener("change", function () {
+         if (busy) return;
          selectedRoleName = roleSelect.value;
-         render();
+         render("access");
+         root.querySelector("[name=selected_role]").focus();
       });
-      var assignedText = role.assignedUsers === 1 ?
-         "1 assigned user" : role.assignedUsers + " assigned users";
+      var assignedText = role.enabledUsers + " enabled / " + role.assignedUsers + " assigned users";
       var roleMeta = el("div", { className: "file-service-role-meta" });
       add(roleMeta,
          el("span", { text: role.description || "" }),
@@ -249,6 +278,17 @@
          el("h3", { text: "Add file access" }),
          aclForm(null, selectedRoleName)
       );
+      if (role.enabledUsers === 0) {
+         var roleWarning = el("p", { className: "file-service-warning" });
+         roleWarning.appendChild(document.createTextNode(
+            "No enabled users have the " + role.name +
+            " role. Assign the role to an enabled user in "));
+         roleWarning.appendChild(el("a", {
+            text: "Users & Access", href: state.usersUrl
+         }));
+         roleWarning.appendChild(document.createTextNode("."));
+         access.insertBefore(roleWarning, access.children[1]);
+      }
 
       var grants = state.acls.filter(function (acl) {
          return acl.role === selectedRoleName;
@@ -280,20 +320,31 @@
       return access;
    }
 
-   function render() {
+   function render(changed) {
+      var settings = changed === "access" && document.getElementById("file-service-settings");
+      var access = changed === "settings" && document.getElementById("file-service-access");
       root.replaceChildren();
+      var noAssignedUsers = state.active && !state.acls.some(function (acl) {
+         return acl.enabled && state.roles.some(function (role) {
+            return role.name === acl.role && role.enabledUsers > 0;
+         });
+      });
       root.appendChild(el("p", {
          id: "file-service-message",
-         className: "file-service-message",
+         className: "file-service-message" + (noAssignedUsers ? " warning" : ""),
          text: state.runtimeError || (
+            noAssignedUsers ? "File Services is active, but no enabled user has an enabled access rule." :
             state.active ? "File Services is active at " + state.mountUrl :
                "File Services is disabled."
          )
       }));
+      document.getElementById("file-service-message").setAttribute("role", "status");
       var columns = el("div", { className: "file-service-columns" });
-      var settings = el("section", { className: "file-service-section" });
-      add(settings, el("h2", { text: "Settings" }), settingsForm());
-      add(columns, settings, roleAccessSection());
+      if (!settings) {
+         settings = el("section", { id: "file-service-settings", className: "file-service-section" });
+         add(settings, el("h2", { text: "Settings" }), settingsForm());
+      }
+      add(columns, settings, access || roleAccessSection());
       root.appendChild(columns);
    }
 

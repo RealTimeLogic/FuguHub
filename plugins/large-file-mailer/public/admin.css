@@ -39,6 +39,18 @@
    font-weight: 700;
 }
 
+.mailer-message:not(:empty) {
+   padding: 12px;
+   border: 1px solid currentColor;
+   border-radius: 6px;
+}
+
+.mailer-form { max-width: 960px; }
+.mailer-form > fieldset:first-child { margin-top: 0; }
+.mailer-form .field { min-width: 0; }
+.mailer-advanced { margin: 20px 0; }
+.mailer-advanced summary { cursor: pointer; color: var(--body); font-weight: 700; }
+
 .mailer-message.success {
    color: var(--green);
 }
@@ -65,8 +77,10 @@
    flex: 0 0 auto;
    align-items: center;
    gap: 7px;
-   white-space: nowrap;
+   white-space: normal;
 }
+
+.mailer-flags input { width: auto; flex: 0 0 auto; }
 
 .mailer-actions {
    display: flex;

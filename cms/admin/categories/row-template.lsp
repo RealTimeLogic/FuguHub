@@ -15,10 +15,10 @@ function adminRenderCategory(row, message)
    <?lsp if message then ?><div class="save-confirmation" role="status"><?lsp= esc(message) ?></div><?lsp end ?>
    <div class="category-grid">
       <div><label>ID</label><span class="muted"><?lsp= esc(id) ?></span></div>
-      <div><label>Name</label><input name="name" value="<?lsp= esc(row.name) ?>" required></div>
-      <div><label>Slug</label><input name="slug" value="<?lsp= esc(row.slug) ?>" required></div>
+      <div><label for="category-<?lsp= id ?>-name">Name</label><input id="category-<?lsp= id ?>-name" name="name" value="<?lsp= esc(row.name) ?>" required></div>
+      <div><label for="category-<?lsp= id ?>-slug">Slug</label><input id="category-<?lsp= id ?>-slug" name="slug" value="<?lsp= esc(row.slug) ?>" required></div>
       <div><label>Posts</label><span class="tag"><?lsp= esc(row.publishedPostCount) ?></span></div>
-      <div class="category-description"><label>Description</label><textarea class="short" name="description"><?lsp= esc(row.description) ?></textarea></div>
+      <div class="category-description"><label for="category-<?lsp= id ?>-description">Description</label><textarea id="category-<?lsp= id ?>-description" class="short" name="description"><?lsp= esc(row.description) ?></textarea></div>
       <div class="actions item-actions">
          <a class="button secondary" href="<?lsp= esc(app.url(row.path)) ?>">View</a>
          <button type="submit" class="secondary" name="action" value="update">Save</button>

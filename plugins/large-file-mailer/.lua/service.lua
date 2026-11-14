@@ -1,26 +1,27 @@
+local settingsModule = pluginreq "settings"
+local contactsModule = pluginreq "contacts"
+local util = pluginreq "util"
+local trim = util.trim
+local quote = util.quote
+local execute = util.execute
+local integer = util.integer
+local rows = util.rows
+local one = util.one
+local sqlRow = util.sqlRow
+local insertId = util.insertId
+local emailAddress = util.emailAddress
+local mailboxAddress = util.mailboxAddress
+
 local parseEml = require "eml/EmailMessage"
+local cleanError = app.appreq "publicerror"
 require "socket.mail"
 
 local M = {}
 local runtime
-local KEY_NAME = "FuguHub-Large-File-Mailer-SMTP"
-
-local function trim(value)
-   return tostring(value or ""):gsub("^%s+", ""):gsub("%s+$", "")
-end
 
 local function htmlEscape(value)
    return tostring(value or ""):gsub("&", "&amp;"):gsub("<", "&lt;"):
       gsub(">", "&gt;"):gsub('"', "&quot;")
-end
-
-local function cleanError(value)
-   local message = tostring(value or "Request failed")
-   while true do
-      local cleaned = message:match("^.-%.lua:%d+:%s*(.*)$")
-      if not cleaned or cleaned == message then return message end
-      message = cleaned
-   end
 end
 
 local function fileRootLabel(files)
@@ -30,117 +31,6 @@ local function fileRootLabel(files)
    end
    return tostring(location.io or "configured") .. " IO at " ..
       tostring(location.path or "/")
-end
-
-local function quote(value)
-   return luasql.quotestr(tostring(value or ""))
-end
-
-local function execute(conn, sql)
-   local result, err = conn:execute(sql)
-   if result == nil then error(tostring(err or "SQL execution failed"), 2) end
-   if type(result) == "userdata" and result.close then result:close() end
-end
-
-local function integer(value, minimum, maximum, label)
-   value = tonumber(value)
-   if not value or value % 1 ~= 0 or value < minimum or value > maximum then
-      error(label .. " must be an integer from " .. minimum .. " to " .. maximum, 3)
-   end
-   return value
-end
-
-local function rows(ctx, sql)
-   local env, conn = ctx.db.openRead()
-   local ok, result = pcall(function()
-      local cursor, err = conn:execute(sql)
-      if not cursor then error(tostring(err or "SQL query failed"), 2) end
-      local values = {}
-      while true do
-         local row = cursor:fetch({}, "a")
-         if not row then break end
-         values[#values + 1] = row
-      end
-      cursor:close()
-      return values
-   end)
-   conn:close()
-   env:close()
-   if not ok then error(result, 2) end
-   return result
-end
-
-local function encryptionKey()
-   local unique = ba.tpm.uniquekey(KEY_NAME, 32)
-   return ba.crypto.hash"sha256"(unique)(true)
-end
-
-local function encryptSecret(secret)
-   local iv = ba.rndbs(12)
-   local cipher, tag = ba.crypto.symmetric("GCM", encryptionKey(), iv):encrypt(secret)
-   return table.concat({
-      "v1", ba.b64urlencode(iv), ba.b64urlencode(tag), ba.b64urlencode(cipher)
-   }, ":")
-end
-
-local function decryptSecret(encoded)
-   if type(encoded) ~= "string" then return nil, "SMTP password is missing" end
-   local version, ivText, tagText, cipherText =
-      encoded:match("^([^:]+):([^:]+):([^:]+):([^:]+)$")
-   if version ~= "v1" then return nil, "SMTP password format is unsupported" end
-   local iv, tag, cipher = ba.b64decode(ivText), ba.b64decode(tagText),
-      ba.b64decode(cipherText)
-   if not iv or #iv ~= 12 or not tag or not cipher then
-      return nil, "SMTP password is corrupt"
-   end
-   local secret = ba.crypto.symmetric("GCM", encryptionKey(), iv):decrypt(cipher, tag)
-   if secret == nil then return nil, "SMTP password cannot be decrypted" end
-   return secret
-end
-
-local function loadSettings(ctx)
-   local row = rows(ctx, [[
-SELECT enabled,smtp_server,smtp_port,smtp_security,smtp_username,
-       from_address,reply_to,public_base_url,attachment_limit,grant_ttl,max_attempts,
-       retry_base,send_interval,require_https
-FROM mailer_settings WHERE singleton=1
-]])[1]
-   local secret = rows(ctx,
-      "SELECT encrypted_password FROM mailer_smtp_secret WHERE singleton=1")[1]
-   return {
-      enabled = tonumber(row.enabled) == 1,
-      smtpServer = row.smtp_server,
-      smtpPort = tonumber(row.smtp_port),
-      smtpSecurity = row.smtp_security,
-      smtpUsername = row.smtp_username,
-      fromAddress = row.from_address,
-      replyTo = row.reply_to,
-      publicBaseUrl = row.public_base_url,
-      attachmentLimit = tonumber(row.attachment_limit),
-      grantTtl = tonumber(row.grant_ttl),
-      maxAttempts = tonumber(row.max_attempts),
-      retryBase = tonumber(row.retry_base),
-      sendInterval = tonumber(row.send_interval),
-      requireHttps = tonumber(row.require_https) == 1,
-      passwordConfigured = secret ~= nil,
-      encryptedPassword = secret and secret.encrypted_password or nil
-   }
-end
-
-local function one(ctx, sql)
-   return rows(ctx, sql)[1]
-end
-
-local function sqlRow(conn, sql)
-   local cursor, err = conn:execute(sql)
-   if not cursor then error(tostring(err or "SQL query failed"), 2) end
-   local row = cursor:fetch({}, "a")
-   cursor:close()
-   return row
-end
-
-local function insertId(conn)
-   return tonumber(sqlRow(conn, "SELECT last_insert_rowid() AS id").id)
 end
 
 local function secureEqual(a, b)
@@ -219,212 +109,6 @@ local function digestFile(files, username, path)
    }
 end
 
-local function emailAddress(value)
-   value = trim(value)
-   if #value > 254 or not value:match("^[^%s@]+@[^%s@]+%.[^%s@]+$") then
-      error("Invalid recipient email address", 3)
-   end
-   return value
-end
-
-local function mailboxAddress(value, field, optional)
-   value = trim(value)
-   field = field or "email address"
-   if value == "" and optional then return "" end
-   if value == "" or #value > 320 or value:find("[\r\n]") then
-      error("Invalid " .. field, 3)
-   end
-   local display, address = value:match("^([^<>]*)<([^<>]+)>$")
-   if not address then
-      if value:find("[<>]") then error("Invalid " .. field, 3) end
-      address = value
-   end
-   address = trim(address)
-   if #address > 254 or not address:match("^[^%s@]+@[^%s@]+%.[^%s@]+$") then
-      error("Invalid " .. field, 3)
-   end
-   display = trim(display)
-   return display ~= "" and (display .. " <" .. address .. ">") or address
-end
-
-local function extractEmailAddresses(source)
-   source = tostring(source or "")
-   if #source > 2 * 1024 * 1024 then error("Email input exceeds 2 MiB", 3) end
-   local values, seen = {}, {}
-   for extracted in source:gmatch("[%w!#$%%&'*+/=?^_`{|}~%.%-]+@[%w%.%-]+") do
-      local candidate = extracted:gsub("^%.+", ""):gsub("%.+$", "")
-      local localPart, domain = candidate:match("^([^@]+)@([^@]+)$")
-      local valid = localPart and domain and #candidate <= 254 and
-         localPart:sub(1, 1) ~= "." and localPart:sub(-1) ~= "." and
-         not localPart:find("..", 1, true) and
-         not domain:find("..", 1, true) and domain:find(".", 1, true) and
-         domain:sub(1, 1) ~= "-" and domain:sub(-1) ~= "-"
-      if valid then
-         for label in domain:gmatch("[^.]+") do
-            if label:sub(1, 1) == "-" or label:sub(-1) == "-" then
-               valid = false
-               break
-            end
-         end
-      end
-      if valid then
-         local key = candidate:lower()
-         if not seen[key] then
-            seen[key] = true
-            values[#values + 1] = candidate
-            if #values > 10000 then
-               error("Email input exceeds 10000 unique addresses", 3)
-            end
-         end
-      end
-   end
-   if #values == 0 then error("No email addresses were found", 3) end
-   return values
-end
-
-local cp1252 = {
-   [0x80] = 0x20AC, [0x82] = 0x201A, [0x83] = 0x0192,
-   [0x84] = 0x201E, [0x85] = 0x2026, [0x86] = 0x2020,
-   [0x87] = 0x2021, [0x88] = 0x02C6, [0x89] = 0x2030,
-   [0x8A] = 0x0160, [0x8B] = 0x2039, [0x8C] = 0x0152,
-   [0x8E] = 0x017D, [0x91] = 0x2018, [0x92] = 0x2019,
-   [0x93] = 0x201C, [0x94] = 0x201D, [0x95] = 0x2022,
-   [0x96] = 0x2013, [0x97] = 0x2014, [0x98] = 0x02DC,
-   [0x99] = 0x2122, [0x9A] = 0x0161, [0x9B] = 0x203A,
-   [0x9C] = 0x0153, [0x9E] = 0x017E, [0x9F] = 0x0178
-}
-
-local function normalizeCsvEncoding(source)
-   if source:sub(1, 2) == "\255\254" or source:sub(1, 2) == "\254\255" then
-      error("UTF-16 CSV is not supported; export as UTF-8 or Windows-1252", 3)
-   end
-   if utf8.len(source) then return source end
-   local converted = {}
-   for index = 1, #source do
-      local byte = source:byte(index)
-      if byte < 0x80 then
-         converted[#converted + 1] = string.char(byte)
-      elseif byte >= 0xA0 then
-         converted[#converted + 1] = utf8.char(byte)
-      else
-         local codepoint = cp1252[byte]
-         if not codepoint then
-            error("CSV is neither valid UTF-8 nor supported Windows-1252", 3)
-         end
-         converted[#converted + 1] = utf8.char(codepoint)
-      end
-   end
-   return table.concat(converted)
-end
-
-local function parseCsv(source)
-   source = tostring(source or "")
-   if #source > 2097152 then error("CSV input exceeds 2 MiB", 3) end
-   source = normalizeCsvEncoding(source)
-   source = source:gsub("^\239\187\191", "")
-   local records, record, field = {}, {}, {}
-   local quoted, index, length = false, 1, #source
-   local function finishField()
-      record[#record + 1] = table.concat(field)
-      field = {}
-   end
-   local function finishRecord()
-      finishField()
-      local nonempty = false
-      for _, value in ipairs(record) do
-         if value ~= "" then nonempty = true break end
-      end
-      if nonempty then
-         records[#records + 1] = record
-         if #records > 5001 then error("CSV input exceeds 5000 contacts", 3) end
-      end
-      record = {}
-   end
-   while index <= length do
-      local char = source:sub(index, index)
-      if quoted then
-         if char == '"' then
-            if source:sub(index + 1, index + 1) == '"' then
-               field[#field + 1] = '"'
-               index = index + 1
-            else
-               quoted = false
-            end
-         else
-            field[#field + 1] = char
-         end
-      elseif char == '"' and #field == 0 then
-         quoted = true
-      elseif char == "," then
-         finishField()
-      elseif char == "\r" or char == "\n" then
-         if char == "\r" and source:sub(index + 1, index + 1) == "\n" then
-            index = index + 1
-         end
-         finishRecord()
-      else
-         field[#field + 1] = char
-      end
-      index = index + 1
-   end
-   if quoted then error("CSV input has an unterminated quoted field", 3) end
-   if #field > 0 or #record > 0 then finishRecord() end
-   if #records < 1 then error("CSV input must contain at least one row", 3) end
-   return records
-end
-
-local function csvMapping(headers, requested, requireEmail)
-   local aliases = {
-      email = { email = true, emailaddress = true, primaryemail = true,
-         primaryemailaddress = true, email1 = true, emailaddress1 = true },
-      firstName = { firstname = true, first = true, givenname = true },
-      lastName = { lastname = true, last = true, surname = true, familyname = true },
-      externalId = { externalid = true, contactid = true, id = true }
-   }
-   local mapping = {}
-   for fieldName, names in pairs(aliases) do
-      local selected = requested and tonumber(requested[fieldName])
-      if selected and selected >= 1 and selected <= #headers then
-         mapping[fieldName] = selected
-      elseif not requested then
-         for column, heading in ipairs(headers) do
-            local normalized = trim(heading):lower():gsub("[^a-z0-9]", "")
-            if names[normalized] then mapping[fieldName] = column break end
-         end
-      end
-   end
-   if requireEmail and not mapping.email then error("Select an email column", 3) end
-   return mapping
-end
-
-local function csvLayout(records, forcedHasHeader)
-   local detected = csvMapping(records[1])
-   local firstEmailColumn
-   for column, value in ipairs(records[1]) do
-      if pcall(emailAddress, value) then
-         firstEmailColumn = column
-         break
-      end
-   end
-   local hasHeader = forcedHasHeader
-   if hasHeader == nil then
-      hasHeader = next(detected) ~= nil or firstEmailColumn == nil
-   end
-   if hasHeader then
-      if #records < 2 then
-         error("CSV input must contain at least one contact row", 3)
-      end
-      if #records - 1 > 5000 then error("CSV input exceeds 5000 contacts", 3) end
-      return records[1], detected, 2, true
-   end
-   if #records > 5000 then error("CSV input exceeds 5000 contacts", 3) end
-   local columnCount = 0
-   for _, row in ipairs(records) do columnCount = math.max(columnCount, #row) end
-   local headers = {}
-   for column = 1, columnCount do headers[column] = "Column " .. column end
-   return headers, { email = firstEmailColumn }, 1, false
-end
-
 local function hasMailerRole(identity, username)
    for _, user in ipairs(identity.users()) do
       if user.username == username and not user.disabled then
@@ -435,6 +119,16 @@ local function hasMailerRole(identity, username)
       end
    end
    return false
+end
+
+local function requireMailerSender(identity, username)
+   if username == "" then
+      error("Mailer sending is disabled until an administrator account and " ..
+         "password are set", 3)
+   end
+   if not hasMailerRole(identity, username) then
+      error("Sender must have the mailer-user, mailer-manager, or cms-admin role", 3)
+   end
 end
 
 local function displayName(path)
@@ -451,8 +145,9 @@ local function absoluteUrl(settings, pluginApp, path)
 end
 
 function M.start(ctx, identity, files, pluginApp)
-   local settings = loadSettings(ctx)
+   local settings = settingsModule.load(ctx)
    local service = {}
+   contactsModule.install(ctx, service)
    local stopped, busy, timer = false, false, nil
    local worker = ba.thread.create()
    local schedule
@@ -460,23 +155,7 @@ function M.start(ctx, identity, files, pluginApp)
    function service.state()
       local fileServices = files and files.location and files.location() or nil
       return {
-         settings = {
-            enabled = settings.enabled,
-            smtpServer = settings.smtpServer,
-            smtpPort = settings.smtpPort,
-            smtpSecurity = settings.smtpSecurity,
-            smtpUsername = settings.smtpUsername,
-            fromAddress = settings.fromAddress,
-            replyTo = settings.replyTo,
-            publicBaseUrl = settings.publicBaseUrl,
-            attachmentLimit = settings.attachmentLimit,
-            grantTtl = settings.grantTtl,
-            maxAttempts = settings.maxAttempts,
-            retryBase = settings.retryBase,
-            sendInterval = settings.sendInterval,
-            requireHttps = settings.requireHttps,
-            passwordConfigured = settings.passwordConfigured
-         },
+         settings = settingsModule.public(settings),
          identityReady = identity ~= nil,
          fileServicesReady = files ~= nil,
          fileServices = fileServices
@@ -488,88 +167,7 @@ function M.start(ctx, identity, files, pluginApp)
    end
 
    function service.saveSettings(input)
-      input = input or {}
-      local nextSettings = {
-         enabled = input.enabled == true,
-         smtpServer = trim(input.smtpServer),
-         smtpPort = integer(input.smtpPort, 1, 65535, "SMTP port"),
-         smtpSecurity = tostring(input.smtpSecurity or ""),
-         smtpUsername = trim(input.smtpUsername),
-         fromAddress = trim(input.fromAddress),
-         replyTo = trim(input.replyTo),
-         publicBaseUrl = trim(input.publicBaseUrl),
-         attachmentLimit = integer(input.attachmentLimit, 0, 1073741824,
-            "Attachment limit"),
-         grantTtl = integer(input.grantTtl, 60, 31536000, "Grant lifetime"),
-         maxAttempts = integer(input.maxAttempts, 1, 20, "Maximum attempts"),
-         retryBase = integer(input.retryBase, 1, 86400, "Retry delay"),
-         sendInterval = integer(input.sendInterval, 1, 3600, "Send interval"),
-         requireHttps = input.requireHttps == true
-      }
-      if nextSettings.smtpSecurity ~= "none" and
-         nextSettings.smtpSecurity ~= "tls" and
-         nextSettings.smtpSecurity ~= "starttls" then
-         error("SMTP security must be none, tls, or starttls", 2)
-      end
-      if #nextSettings.smtpServer > 253 or #nextSettings.smtpUsername > 320 or
-         #nextSettings.fromAddress > 320 or #nextSettings.replyTo > 320 or
-         #nextSettings.publicBaseUrl > 2048 then
-         error("An SMTP setting is too long", 2)
-      end
-      if nextSettings.enabled and (nextSettings.smtpServer == "" or
-         nextSettings.fromAddress == "") then
-         error("SMTP server and from address are required before enabling the mailer", 2)
-      end
-      if nextSettings.fromAddress ~= "" then
-         nextSettings.fromAddress = mailboxAddress(nextSettings.fromAddress,
-            "from address")
-      end
-      if nextSettings.replyTo ~= "" then
-         nextSettings.replyTo = mailboxAddress(nextSettings.replyTo,
-            "reply-to address")
-      end
-      if nextSettings.publicBaseUrl ~= "" then
-         if not nextSettings.publicBaseUrl:match("^https?://[^/]+$") then
-            error("Public base URL must be an absolute HTTP or HTTPS URL", 2)
-         end
-         nextSettings.publicBaseUrl = nextSettings.publicBaseUrl:gsub("/+$", "")
-      end
-      if nextSettings.requireHttps and nextSettings.publicBaseUrl ~= "" and
-         not nextSettings.publicBaseUrl:match("^https://") then
-         error("Public base URL must use HTTPS when secure downloads require HTTPS", 2)
-      end
-
-      local password = input.password
-      if password ~= nil then
-         password = tostring(password)
-         if #password > 4096 then error("SMTP password is too long", 2) end
-      end
-      local encryptedPassword = password and password ~= "" and
-         encryptSecret(password) or nil
-      ctx.db.writeSync(function(conn)
-         execute(conn, string.format([[
-UPDATE mailer_settings SET
- enabled=%d,smtp_server=%s,smtp_port=%d,smtp_security=%s,
- smtp_username=%s,from_address=%s,reply_to=%s,public_base_url=%s,attachment_limit=%d,
- grant_ttl=%d,max_attempts=%d,retry_base=%d,send_interval=%d,require_https=%d
-WHERE singleton=1
-]], nextSettings.enabled and 1 or 0, quote(nextSettings.smtpServer),
-            nextSettings.smtpPort, quote(nextSettings.smtpSecurity),
-            quote(nextSettings.smtpUsername), quote(nextSettings.fromAddress),
-            quote(nextSettings.replyTo), quote(nextSettings.publicBaseUrl),
-            nextSettings.attachmentLimit,
-            nextSettings.grantTtl, nextSettings.maxAttempts,
-            nextSettings.retryBase, nextSettings.sendInterval,
-            nextSettings.requireHttps and 1 or 0))
-         if input.clearPassword == true then
-            execute(conn, "DELETE FROM mailer_smtp_secret WHERE singleton=1")
-         elseif encryptedPassword then
-            execute(conn, "INSERT OR REPLACE INTO mailer_smtp_secret" ..
-               "(singleton,encrypted_password) VALUES(1," ..
-               quote(encryptedPassword) .. ")")
-         end
-      end)
-      settings = loadSettings(ctx)
+      settings = settingsModule.save(ctx, input)
       if settings.enabled and schedule then
          schedule(1)
       elseif not settings.enabled and timer then
@@ -580,610 +178,11 @@ WHERE singleton=1
    end
 
    function service.encryptPassword(password)
-      return encryptSecret(tostring(password or ""))
+      return settingsModule.encrypt(tostring(password or ""))
    end
 
    function service.decryptPassword(encoded)
-      return decryptSecret(encoded)
-   end
-
-   function service.contacts(query, page, pageSize, listId, includeUnsubscribed,
-      contactFilter)
-      query = trim(query)
-      page = integer(page or 1, 1, 1000000, "Page")
-      pageSize = integer(pageSize or 50, 1, 200, "Page size")
-      if listId ~= nil then
-         listId = integer(listId, 1, 9007199254740991, "List ID")
-      end
-      local filters = {}
-      if query ~= "" then
-         local pattern = quote("%" .. query .. "%")
-         filters[#filters + 1] = "(email LIKE " .. pattern ..
-             " OR first_name LIKE " .. pattern ..
-             " OR last_name LIKE " .. pattern ..
-             " OR external_id LIKE " .. pattern .. ")"
-      end
-      if listId then
-         filters[#filters + 1] = string.format([[EXISTS(
- SELECT 1 FROM mailer_list_members filter_members
- WHERE filter_members.contact_id=mailer_contacts.id AND filter_members.list_id=%d
-)]], listId)
-      end
-      if includeUnsubscribed == false then
-         filters[#filters + 1] = "mailer_contacts.unsubscribed_at IS NULL"
-      end
-      contactFilter = tostring(contactFilter or "all")
-      if contactFilter == "unassigned" then
-         filters[#filters + 1] = [[NOT EXISTS(
- SELECT 1 FROM mailer_list_members status_members
- WHERE status_members.contact_id=mailer_contacts.id
-)]]
-      elseif contactFilter == "unsubscribed" then
-         filters[#filters + 1] = "mailer_contacts.unsubscribed_at IS NOT NULL"
-      elseif contactFilter ~= "all" then
-         error("Unknown contact filter", 2)
-      end
-      local where = #filters > 0 and " WHERE " .. table.concat(filters, " AND ") or ""
-      local count = one(ctx, "SELECT COUNT(*) AS count FROM mailer_contacts" .. where)
-      local values, byId, ids = {}, {}, {}
-      for _, row in ipairs(rows(ctx, [[
-SELECT mailer_contacts.id,external_id,email,first_name,last_name,
-       mailer_contacts.unsubscribed_at,created_at,
-       mailer_contacts.updated_at,credentials.confirmed_at,
-       credentials.invitation_sent_at,credentials.invitation_expires_at
-FROM mailer_contacts
-LEFT JOIN mailer_contact_credentials credentials
-  ON credentials.contact_id=mailer_contacts.id]] .. where ..
-         " ORDER BY email LIMIT " .. pageSize ..
-         " OFFSET " .. ((page - 1) * pageSize))) do
-         local value = {
-             id = tonumber(row.id), externalId = row.external_id,
-             email = row.email, firstName = row.first_name,
-              lastName = row.last_name,
-              unsubscribed = row.unsubscribed_at ~= nil,
-              unsubscribedAt = tonumber(row.unsubscribed_at),
-             createdAt = tonumber(row.created_at), updatedAt = tonumber(row.updated_at),
-             confirmed = row.confirmed_at ~= nil,
-             confirmedAt = tonumber(row.confirmed_at),
-             invitationSentAt = tonumber(row.invitation_sent_at),
-             invitationExpiresAt = tonumber(row.invitation_expires_at),
-             listIds = {}, listNames = {}
-          }
-         values[#values + 1] = value
-         byId[value.id] = value
-         ids[#ids + 1] = value.id
-      end
-      if #ids > 0 then
-         for _, membership in ipairs(rows(ctx, string.format([[
-SELECT m.contact_id,m.list_id,l.name
-FROM mailer_list_members m JOIN mailer_lists l ON l.id=m.list_id
-WHERE m.contact_id IN (%s) ORDER BY l.name
-]], table.concat(ids, ",")))) do
-            local contact = byId[tonumber(membership.contact_id)]
-            contact.listIds[#contact.listIds + 1] = tonumber(membership.list_id)
-            contact.listNames[#contact.listNames + 1] = membership.name
-         end
-      end
-      return { items = values, page = page, pageSize = pageSize,
-         total = tonumber(count.count) }
-   end
-
-   function service.previewContactsCsv(source)
-      local records = parseCsv(source)
-      local headers, mapping, firstRow, hasHeader = csvLayout(records)
-      local preview, previewErrors = {}, {}
-      for index = firstRow, math.min(#records, firstRow + 9) do
-         preview[#preview + 1] = records[index]
-         if mapping.email then
-            local ok, err = pcall(emailAddress, records[index][mapping.email])
-            if not ok then previewErrors[#previewErrors + 1] = {
-               row = index, error = tostring(err)
-            } end
-         end
-      end
-      return {
-         headers = headers,
-         mapping = mapping,
-         rows = preview,
-         errors = previewErrors,
-         totalRows = #records - firstRow + 1,
-         hasHeader = hasHeader
-      }
-   end
-
-   function service.importContactsCsv(source, requestedMapping, destinationListId,
-      restoreUnsubscribed, hasHeader)
-      destinationListId = integer(destinationListId, 1, 9007199254740991,
-         "Destination list")
-      if not one(ctx, "SELECT id FROM mailer_lists WHERE id=" .. destinationListId) then
-         error("Destination list not found", 2)
-      end
-      local records = parseCsv(source)
-      local headers, _, firstRow = csvLayout(records, hasHeader)
-      local mapping = csvMapping(headers, requestedMapping, true)
-      local candidates, sourceSeen, errors = {}, {}, {}
-      for rowNumber = firstRow, #records do
-         local row = records[rowNumber]
-         local ok, email = pcall(emailAddress, row[mapping.email])
-         if not ok then
-            errors[#errors + 1] = { row = rowNumber, error = tostring(email) }
-         else
-            local key = email:lower()
-            if sourceSeen[key] then
-               errors[#errors + 1] = { row = rowNumber, error = "Duplicate email in CSV" }
-            else
-               sourceSeen[key] = true
-               local candidate = {
-                  row = rowNumber,
-                  email = email,
-                  firstName = trim(row[mapping.firstName]),
-                  lastName = trim(row[mapping.lastName]),
-                  externalId = trim(row[mapping.externalId])
-               }
-               if #candidate.externalId > 200 or #candidate.firstName > 160 or
-                  #candidate.lastName > 160 then
-                  errors[#errors + 1] = { row = rowNumber,
-                     error = "A contact field is too long" }
-               else
-                  candidates[#candidates + 1] = candidate
-               end
-            end
-         end
-      end
-      local imported, membersAdded, restored, duplicates, suppressed, now =
-         0, 0, 0, {}, {}, os.time()
-      for startIndex = 1, #candidates, 100 do
-         ctx.db.writeSync(function(conn)
-            for index = startIndex, math.min(startIndex + 99, #candidates) do
-               local contact = candidates[index]
-               execute(conn, string.format([[
-INSERT OR IGNORE INTO mailer_contacts(
- external_id,email,first_name,last_name,created_at,updated_at
-) VALUES(%s,%s,%s,%s,%d,%d)
-]], contact.externalId ~= "" and quote(contact.externalId) or "NULL",
-                  quote(contact.email), quote(contact.firstName), quote(contact.lastName),
-                  now, now))
-               if tonumber(sqlRow(conn, "SELECT changes() AS count").count) == 1 then
-                  imported = imported + 1
-               else
-                  duplicates[#duplicates + 1] = {
-                     row = contact.row, email = contact.email
-                  }
-               end
-               local saved = sqlRow(conn,
-                  "SELECT id,unsubscribed_at FROM mailer_contacts WHERE email=" ..
-                  quote(contact.email))
-                if saved.unsubscribed_at and restoreUnsubscribed == true then
-                   execute(conn, "UPDATE mailer_contacts SET unsubscribed_at=NULL," ..
-                      "updated_at=" .. now .. " WHERE id=" .. tonumber(saved.id))
-                   execute(conn, "DELETE FROM mailer_unsubscribe_tokens WHERE contact_id=" ..
-                      tonumber(saved.id))
-                   restored = restored + 1
-                   execute(conn, string.format(
-                      "INSERT OR IGNORE INTO mailer_list_members(list_id,contact_id) " ..
-                      "VALUES(%d,%d)", destinationListId, tonumber(saved.id)))
-                   membersAdded = membersAdded +
-                      tonumber(sqlRow(conn, "SELECT changes() AS count").count)
-                elseif saved.unsubscribed_at then
-                   suppressed[#suppressed + 1] = {
-                      row = contact.row, email = contact.email
-                  }
-               else
-                  execute(conn, string.format(
-                     "INSERT OR IGNORE INTO mailer_list_members(list_id,contact_id) " ..
-                     "VALUES(%d,%d)", destinationListId, tonumber(saved.id)))
-                  membersAdded = membersAdded +
-                     tonumber(sqlRow(conn, "SELECT changes() AS count").count)
-               end
-            end
-         end)
-      end
-      return { imported = imported, membersAdded = membersAdded, restored = restored,
-         listId = destinationListId, duplicates = duplicates,
-         suppressed = suppressed, errors = errors,
-         totalRows = #records - firstRow + 1 }
-   end
-
-   function service.saveContact(input)
-      input = input or {}
-      local id = input.id and integer(input.id, 1, 9007199254740991, "Contact ID")
-      local email = emailAddress(input.email)
-      local externalId = trim(input.externalId)
-      local firstName, lastName = trim(input.firstName), trim(input.lastName)
-      if #externalId > 200 or #firstName > 160 or #lastName > 160 then
-         error("A contact field is too long", 2)
-      end
-      local listIds
-      if input.listIds ~= nil then
-         listIds = {}
-         local seen = {}
-         for _, value in ipairs(input.listIds) do
-            local listId = integer(value, 1, 9007199254740991, "List ID")
-            if not seen[listId] then
-               seen[listId] = true
-               listIds[#listIds + 1] = listId
-            end
-         end
-      end
-      local now, resultId = os.time()
-      ctx.db.writeSync(function(conn)
-         if id then
-            execute(conn, string.format([[
-UPDATE mailer_contacts SET external_id=%s,email=%s,first_name=%s,last_name=%s,
- updated_at=%d WHERE id=%d
-]], externalId ~= "" and quote(externalId) or "NULL", quote(email),
-               quote(firstName), quote(lastName), now, id))
-            resultId = id
-         else
-            execute(conn, string.format([[
-INSERT INTO mailer_contacts(
- external_id,email,first_name,last_name,created_at,updated_at
-) VALUES(%s,%s,%s,%s,%d,%d)
-]], externalId ~= "" and quote(externalId) or "NULL", quote(email),
-               quote(firstName), quote(lastName), now, now))
-            resultId = insertId(conn)
-         end
-         if listIds then
-            execute(conn, "DELETE FROM mailer_list_members WHERE contact_id=" .. resultId)
-            local saved = sqlRow(conn,
-               "SELECT unsubscribed_at FROM mailer_contacts WHERE id=" .. resultId)
-            if not saved.unsubscribed_at then
-               for _, listId in ipairs(listIds) do
-                  execute(conn, string.format(
-                     "INSERT INTO mailer_list_members(list_id,contact_id) VALUES(%d,%d)",
-                     listId, resultId))
-               end
-            end
-         end
-      end)
-      return resultId
-   end
-
-   function service.resubscribeContact(id)
-      id = integer(id, 1, 9007199254740991, "Contact ID")
-      ctx.db.writeSync(function(conn)
-         execute(conn, "UPDATE mailer_contacts SET unsubscribed_at=NULL,updated_at=" ..
-            os.time() .. " WHERE id=" .. id)
-         execute(conn, "DELETE FROM mailer_unsubscribe_tokens WHERE contact_id=" .. id)
-      end)
-      return true
-   end
-
-   function service.resubscribeContacts(contactIds)
-      local selected, seen = {}, {}
-      for _, value in ipairs(contactIds or {}) do
-         local contactId = integer(value, 1, 9007199254740991, "Contact ID")
-         if not seen[contactId] then
-            seen[contactId] = true
-            selected[#selected + 1] = contactId
-         end
-      end
-      if #selected == 0 then error("Select at least one contact", 2) end
-      local restored = 0
-      ctx.db.writeSync(function(conn)
-         local ids = table.concat(selected, ",")
-         execute(conn, "UPDATE mailer_contacts SET unsubscribed_at=NULL,updated_at=" ..
-            os.time() .. " WHERE unsubscribed_at IS NOT NULL AND id IN (" .. ids .. ")")
-         restored = tonumber(sqlRow(conn, "SELECT changes() AS count").count)
-         execute(conn, "DELETE FROM mailer_unsubscribe_tokens WHERE contact_id IN (" ..
-            ids .. ")")
-      end)
-      return { restored = restored }
-   end
-
-   function service.deleteContact(id)
-      id = integer(id, 1, 9007199254740991, "Contact ID")
-      ctx.db.writeSync(function(conn)
-         execute(conn, "DELETE FROM mailer_contacts WHERE id=" .. id)
-      end)
-      return true
-   end
-
-   function service.resetContactPassword(id)
-      id = integer(id, 1, 9007199254740991, "Contact ID")
-      ctx.db.writeSync(function(conn)
-         execute(conn, string.format([[
-INSERT INTO mailer_contact_credentials(contact_id,updated_at)
-VALUES(%d,%d)
-ON CONFLICT(contact_id) DO UPDATE SET
- password_salt=NULL,password_hash=NULL,password_iterations=NULL,confirmed_at=NULL,
- invitation_token_hash=NULL,invitation_expires_at=NULL,updated_at=excluded.updated_at
-]], id, os.time()))
-      end)
-      return true
-   end
-
-   function service.deleteContacts(contactIds)
-      local selected, seen = {}, {}
-      for _, value in ipairs(contactIds or {}) do
-         local contactId = integer(value, 1, 9007199254740991, "Contact ID")
-         if not seen[contactId] then
-            seen[contactId] = true
-            selected[#selected + 1] = contactId
-         end
-      end
-      if #selected == 0 then error("Select at least one contact", 2) end
-      local removed = 0
-      ctx.db.writeSync(function(conn)
-         execute(conn, "DELETE FROM mailer_contacts WHERE id IN (" ..
-            table.concat(selected, ",") .. ")")
-         removed = tonumber(sqlRow(conn, "SELECT changes() AS count").count)
-      end)
-      return { removed = removed }
-   end
-
-   local function contactRemovalMatches(source)
-      local emails = extractEmailAddresses(source)
-      local found = {}
-      for startIndex = 1, #emails, 200 do
-         local quoted = {}
-         for index = startIndex, math.min(startIndex + 199, #emails) do
-            quoted[#quoted + 1] = quote(emails[index])
-         end
-         for _, row in ipairs(rows(ctx, [[
-SELECT id,email,first_name,last_name FROM mailer_contacts
-WHERE email IN (]] .. table.concat(quoted, ",") .. ")")) do
-            found[row.email:lower()] = {
-               id = tonumber(row.id), email = row.email,
-               firstName = row.first_name, lastName = row.last_name
-            }
-         end
-      end
-      local matches, notFound = {}, {}
-      for _, email in ipairs(emails) do
-         local contact = found[email:lower()]
-         if contact then matches[#matches + 1] = contact
-         else notFound[#notFound + 1] = email end
-      end
-      return emails, matches, notFound
-   end
-
-   function service.previewContactRemoval(source)
-      local emails, matches, notFound = contactRemovalMatches(source)
-      local shownMatches, shownMissing = {}, {}
-      for index = 1, math.min(#matches, 200) do shownMatches[index] = matches[index] end
-      for index = 1, math.min(#notFound, 100) do shownMissing[index] = notFound[index] end
-      return {
-         extractedCount = #emails,
-         matchCount = #matches,
-         notFoundCount = #notFound,
-         matches = shownMatches,
-         notFound = shownMissing,
-         matchesTruncated = #matches > #shownMatches,
-         notFoundTruncated = #notFound > #shownMissing
-      }
-   end
-
-   function service.removeContactsFromText(source)
-      local emails, matches, notFound = contactRemovalMatches(source)
-      local removed = 0
-      if #matches > 0 then
-         ctx.db.writeSync(function(conn)
-            for startIndex = 1, #matches, 200 do
-               local ids = {}
-               for index = startIndex, math.min(startIndex + 199, #matches) do
-                  ids[#ids + 1] = matches[index].id
-               end
-               execute(conn, "DELETE FROM mailer_contacts WHERE id IN (" ..
-                  table.concat(ids, ",") .. ")")
-               removed = removed +
-                  tonumber(sqlRow(conn, "SELECT changes() AS count").count)
-            end
-         end)
-      end
-      return {
-         extractedCount = #emails,
-         matchedCount = #matches,
-         removed = removed,
-         notFoundCount = #notFound
-      }
-   end
-
-   function service.deleteAllContacts()
-      ctx.db.writeSync(function(conn)
-         execute(conn, "DELETE FROM mailer_contacts")
-      end)
-      return true
-   end
-
-   function service.lists(includeMemberIds)
-      local values, membersByList = {}, {}
-      if includeMemberIds ~= false then
-         for _, member in ipairs(rows(ctx, [[
-SELECT m.list_id,m.contact_id
-FROM mailer_list_members m
-JOIN mailer_lists l ON l.id=m.list_id
-JOIN mailer_contacts c ON c.id=m.contact_id
-ORDER BY m.list_id,m.contact_id
-]])) do
-            local listId = tonumber(member.list_id)
-            local memberIds = membersByList[listId] or {}
-            memberIds[#memberIds + 1] = tonumber(member.contact_id)
-            membersByList[listId] = memberIds
-         end
-      end
-      for _, row in ipairs(rows(ctx, [[
-SELECT l.id,l.name,l.description,l.created_at,l.updated_at,COUNT(c.id) AS members
-FROM mailer_lists l
-LEFT JOIN mailer_list_members m ON m.list_id=l.id
-LEFT JOIN mailer_contacts c ON c.id=m.contact_id
-GROUP BY l.id ORDER BY l.name
-]])) do
-         local listId = tonumber(row.id)
-         values[#values + 1] = {
-            id = listId, name = row.name, description = row.description,
-            members = tonumber(row.members), createdAt = tonumber(row.created_at),
-            updatedAt = tonumber(row.updated_at)
-          }
-         if includeMemberIds ~= false then
-            values[#values].memberIds = membersByList[listId] or {}
-         end
-      end
-      return values
-   end
-
-   function service.list(id)
-      id = integer(id, 1, 9007199254740991, "List ID")
-      local row = one(ctx, [[
-SELECT l.id,l.name,l.description,l.created_at,l.updated_at,COUNT(c.id) AS members
-FROM mailer_lists l
-LEFT JOIN mailer_list_members m ON m.list_id=l.id
-LEFT JOIN mailer_contacts c ON c.id=m.contact_id
-WHERE l.id=]] .. id .. " GROUP BY l.id")
-      if not row then return nil end
-      return { id = tonumber(row.id), name = row.name, description = row.description,
-         members = tonumber(row.members), createdAt = tonumber(row.created_at),
-         updatedAt = tonumber(row.updated_at) }
-   end
-
-   function service.saveList(input)
-      input = input or {}
-      local id = input.id and integer(input.id, 1, 9007199254740991, "List ID")
-      local name, description = trim(input.name), trim(input.description)
-      if name == "" or #name > 160 then error("A valid list name is required", 2) end
-      if #description > 1000 then error("List description is too long", 2) end
-      local memberIds
-      if input.contactIds ~= nil then
-         memberIds = {}
-         local seen = {}
-         for _, value in ipairs(input.contactIds) do
-            local contactId = integer(value, 1, 9007199254740991, "Contact ID")
-            if not seen[contactId] then
-               seen[contactId] = true
-               memberIds[#memberIds + 1] = contactId
-            end
-         end
-      end
-      local now, resultId = os.time()
-      ctx.db.writeSync(function(conn)
-         if id then
-            execute(conn, string.format(
-               "UPDATE mailer_lists SET name=%s,description=%s,updated_at=%d WHERE id=%d",
-               quote(name), quote(description), now, id))
-            resultId = id
-         else
-            execute(conn, string.format([[
-INSERT INTO mailer_lists(name,description,created_at,updated_at)
-VALUES(%s,%s,%d,%d)
-]], quote(name), quote(description), now, now))
-            resultId = insertId(conn)
-         end
-         if memberIds then
-            execute(conn, "DELETE FROM mailer_list_members WHERE list_id=" .. resultId)
-            for _, contactId in ipairs(memberIds) do
-               execute(conn, string.format(
-                  "INSERT INTO mailer_list_members(list_id,contact_id) VALUES(%d,%d)",
-                  resultId, contactId))
-            end
-         end
-      end)
-      return resultId
-   end
-
-   function service.transferListMembers(sourceListId, destinationListId,
-                                         contactIds, deleteSource)
-      sourceListId = integer(sourceListId, 1, 9007199254740991, "Source list")
-      destinationListId = integer(destinationListId, 1, 9007199254740991,
-         "Destination list")
-      if sourceListId == destinationListId then
-         error("Select a different destination list", 2)
-      end
-      if not service.list(sourceListId) then error("Source list not found", 2) end
-      if not service.list(destinationListId) then error("Destination list not found", 2) end
-      local selected
-      if contactIds ~= nil then
-         selected = {}
-         local seen = {}
-         for _, value in ipairs(contactIds) do
-            local contactId = integer(value, 1, 9007199254740991, "Contact ID")
-            if not seen[contactId] then
-               seen[contactId] = true
-               selected[#selected + 1] = contactId
-            end
-         end
-         if #selected == 0 then error("Select at least one contact", 2) end
-         if deleteSource then error("A partial transfer cannot delete the source list", 2) end
-      end
-      local filter = selected and
-         " AND contact_id IN (" .. table.concat(selected, ",") .. ")" or ""
-      local moved, added = 0, 0
-      ctx.db.writeSync(function(conn)
-         moved = tonumber(sqlRow(conn, string.format(
-            "SELECT COUNT(*) AS count FROM mailer_list_members WHERE list_id=%d%s",
-            sourceListId, filter)).count)
-         execute(conn, string.format([[
-INSERT OR IGNORE INTO mailer_list_members(list_id,contact_id)
-SELECT %d,contact_id FROM mailer_list_members WHERE list_id=%d%s
-]], destinationListId, sourceListId, filter))
-         added = tonumber(sqlRow(conn, "SELECT changes() AS count").count)
-         execute(conn, string.format(
-            "DELETE FROM mailer_list_members WHERE list_id=%d%s", sourceListId, filter))
-         if deleteSource then
-            execute(conn, "DELETE FROM mailer_lists WHERE id=" .. sourceListId)
-         end
-      end)
-      return { moved = moved, added = added, sourceListId = sourceListId,
-         destinationListId = destinationListId, sourceDeleted = deleteSource == true }
-   end
-
-   function service.addListMembers(listId, contactIds)
-      listId = integer(listId, 1, 9007199254740991, "List ID")
-      if not service.list(listId) then error("Destination list not found", 2) end
-      local selected, seen = {}, {}
-      for _, value in ipairs(contactIds or {}) do
-         local contactId = integer(value, 1, 9007199254740991, "Contact ID")
-         if not seen[contactId] then
-            seen[contactId] = true
-            selected[#selected + 1] = contactId
-         end
-      end
-      if #selected == 0 then error("Select at least one contact", 2) end
-      local added = 0
-      ctx.db.writeSync(function(conn)
-         for _, contactId in ipairs(selected) do
-            execute(conn, string.format(
-               "INSERT OR IGNORE INTO mailer_list_members(list_id,contact_id) " ..
-               "SELECT %d,id FROM mailer_contacts WHERE id=%d", listId, contactId))
-            added = added + tonumber(sqlRow(conn, "SELECT changes() AS count").count)
-         end
-      end)
-      return { added = added, listId = listId }
-   end
-
-   function service.removeListMembers(listId, contactIds)
-      listId = integer(listId, 1, 9007199254740991, "List ID")
-      local selected, seen = {}, {}
-      for _, value in ipairs(contactIds or {}) do
-         local contactId = integer(value, 1, 9007199254740991, "Contact ID")
-         if not seen[contactId] then
-            seen[contactId] = true
-            selected[#selected + 1] = contactId
-         end
-      end
-      if #selected == 0 then error("Select at least one contact", 2) end
-      local removed = 0
-      ctx.db.writeSync(function(conn)
-         execute(conn, string.format(
-            "DELETE FROM mailer_list_members WHERE list_id=%d AND contact_id IN (%s)",
-            listId, table.concat(selected, ",")))
-         removed = tonumber(sqlRow(conn, "SELECT changes() AS count").count)
-      end)
-      return { removed = removed, listId = listId }
-   end
-
-   function service.deleteList(id)
-      id = integer(id, 1, 9007199254740991, "List ID")
-      ctx.db.writeSync(function(conn)
-         execute(conn, "DELETE FROM mailer_lists WHERE id=" .. id)
-      end)
-      return true
-   end
-
-   function service.deleteAllLists()
-      ctx.db.writeSync(function(conn)
-         execute(conn, "DELETE FROM mailer_lists")
-      end)
-      return true
+      return settingsModule.decrypt(encoded)
    end
 
    function service.templates(includeSource)
@@ -1234,41 +233,6 @@ VALUES(%s,%s,1,%d,%d)
          execute(conn, "DELETE FROM mailer_templates WHERE id=" .. id)
       end)
       return true
-   end
-
-   function service.resolveRecipients(contactIds, listIds)
-      local selected = {}
-      for _, value in ipairs(contactIds or {}) do
-         selected[integer(value, 1, 9007199254740991, "Contact ID")] = true
-      end
-      local normalizedListIds = {}
-      for _, value in ipairs(listIds or {}) do
-         normalizedListIds[#normalizedListIds + 1] =
-            integer(value, 1, 9007199254740991, "List ID")
-      end
-      if #normalizedListIds > 0 then
-         for _, row in ipairs(rows(ctx,
-            "SELECT contact_id FROM mailer_list_members WHERE list_id IN (" ..
-            table.concat(normalizedListIds, ",") .. ")")) do
-            selected[tonumber(row.contact_id)] = true
-         end
-      end
-      local result = {}
-      local selectedIds = {}
-      for contactId in pairs(selected) do selectedIds[#selectedIds + 1] = contactId end
-      table.sort(selectedIds)
-      if #selectedIds > 0 then
-         for _, row in ipairs(rows(ctx,
-            "SELECT * FROM mailer_contacts WHERE id IN (" ..
-            table.concat(selectedIds, ",") .. ")")) do
-            result[#result + 1] = {
-               contactId = tonumber(row.id), email = row.email,
-               firstName = row.first_name, lastName = row.last_name
-            }
-         end
-      end
-      table.sort(result, function(a, b) return a.email:lower() < b.email:lower() end)
-      return result
    end
 
    function service.history(page, pageSize)
@@ -1346,9 +310,7 @@ GROUP BY j.id
       input = input or {}
       if not settings.enabled then error("Large File Mailer is disabled", 2) end
       local sender = trim(input.sender)
-      if not hasMailerRole(identity, sender) then
-         error("Sender does not have a mailer role", 2)
-      end
+      requireMailerSender(identity, sender)
       local mode = tostring(input.deliveryMode or "")
       if mode ~= "email" and mode ~= "attachment" and mode ~= "link" then
          error("Delivery mode must be email, attachment, or link", 2)
@@ -1370,7 +332,12 @@ GROUP BY j.id
       if #textBody > 1048576 or #htmlBody > 1048576 then
          error("Message body is too large", 2)
       end
-      local macroSource = subject .. "\n" .. textBody .. "\n" .. htmlBody ..
+      local messageMacroSource = subject .. "\n" .. textBody .. "\n" .. htmlBody
+      if mode ~= "link" and
+            messageMacroSource:find("{{DOWNLOAD_LINKS}}", 1, true) then
+         error("{{DOWNLOAD_LINKS}} can only be used with Secure download links", 2)
+      end
+      local macroSource = messageMacroSource ..
          "\n" .. tostring(input.templateSnapshot or "")
       if input.recipients ~= nil and type(input.recipients) ~= "table" then
          error("Recipients must be a table", 2)
@@ -1553,9 +520,7 @@ INSERT INTO mailer_job_files(
          error("Public base URL is required for password invitations", 2)
       end
       local sender = trim(input.sender)
-      if not hasMailerRole(identity, sender) then
-         error("Sender does not have a mailer role", 2)
-      end
+      requireMailerSender(identity, sender)
       local subject = trim(input.subject)
       local textBody = tostring(input.textBody or "")
       local htmlBody = tostring(input.htmlBody or "")
@@ -1671,7 +636,7 @@ FROM mailer_jobs WHERE id=]] .. id)
          createdAt = tonumber(job.created_at), queuedAt = tonumber(job.queued_at),
          completedAt = tonumber(job.completed_at), cancelledAt = tonumber(job.cancelled_at),
          recipientCount = recipientCount, recipientsTruncated = recipientCount > 100,
-         recipients = {}, files = {}
+         recipients = {}, files = {}, downloads = {}
       }
       for _, row in ipairs(rows(ctx, [[
 SELECT id,email,first_name,last_name,status,attempts,next_attempt_at,last_error,sent_at
@@ -1692,6 +657,23 @@ FROM mailer_job_files WHERE job_id=]] .. id .. " ORDER BY id")) do
             name = row.download_name, byteLength = tonumber(row.byte_length),
             modifiedAt = tonumber(row.modified_at), sha256 = row.sha256
          }
+      end
+      if job.delivery_mode == "link" then
+         for _, row in ipairs(rows(ctx, string.format([[
+SELECT r.id AS recipient_id,r.email,f.id AS file_id,f.download_name,
+       COALESCE(s.successful_downloads,0) AS successful_downloads,s.last_downloaded_at
+FROM (SELECT id,email FROM mailer_job_recipients WHERE job_id=%d ORDER BY id LIMIT 100) r
+JOIN mailer_job_files f ON f.job_id=%d
+LEFT JOIN mailer_download_stats s ON s.recipient_id=r.id AND s.file_id=f.id
+ORDER BY r.id,f.id
+]], id, id))) do
+            result.downloads[#result.downloads + 1] = {
+               recipientId = tonumber(row.recipient_id), email = row.email,
+               fileId = tonumber(row.file_id), name = row.download_name,
+               successfulDownloads = tonumber(row.successful_downloads),
+               lastDownloadedAt = tonumber(row.last_downloaded_at)
+            }
+         end
       end
       return result
    end
@@ -1738,7 +720,7 @@ FROM mailer_job_files WHERE job_id=]] .. id .. " ORDER BY id")) do
       }
       if settings.smtpUsername ~= "" then options.user = settings.smtpUsername end
       if settings.encryptedPassword then
-         local password, passwordErr = decryptSecret(settings.encryptedPassword)
+         local password, passwordErr = settingsModule.decrypt(settings.encryptedPassword)
          if password == nil then error(passwordErr, 2) end
          options.password = password
       end
@@ -1942,6 +924,13 @@ VALUES(%d,%s,%d)
          for _, file in ipairs(opened) do pcall(function() file:close() end) end
       end
       local ok, result, sendErr = pcall(function()
+         if recipient.job_type == "password-help" then
+            -- Recovery notices contain literal contact data, not mail-merge templates.
+            return smtpClient():send {
+               from = settings.fromAddress, to = recipient.email,
+               subject = recipient.subject, txtbody = recipient.text_body
+            }
+         end
          for _, saved in ipairs(jobFiles) do
             local current, currentErr = digestFile(files, recipient.sender,
                saved.relative_path)
@@ -2300,12 +1289,65 @@ WHERE status IN ('queued','sending','retry')
       return page("You have been unsubscribed from future mailer deliveries.", "success")
    end
 
-   local function logDownload(grantId, eventType, detail)
+   local function logDownload(grant, eventType, detail)
+      local now = os.time()
       ctx.db.writeSync(function(conn)
          execute(conn, string.format([[
 INSERT INTO mailer_download_events(grant_id,event_type,detail,created_at)
 VALUES(%d,%s,%s,%d)
-]], tonumber(grantId), quote(eventType), quote(detail or ""), os.time()))
+]], tonumber(grant.id), quote(eventType), quote(detail or ""), now))
+         if eventType == "download-completed" then
+            execute(conn, string.format([[
+INSERT INTO mailer_download_stats(recipient_id,file_id,successful_downloads,last_downloaded_at)
+VALUES(%d,%d,1,%d)
+ON CONFLICT(recipient_id,file_id) DO UPDATE SET
+ successful_downloads=successful_downloads+1,
+ last_downloaded_at=MAX(last_downloaded_at,excluded.last_downloaded_at)
+]], tonumber(grant.recipient_id), tonumber(grant.file_id), now))
+         end
+      end)
+   end
+
+   local function requestPasswordHelp(grant)
+      if not settings.enabled or settings.smtpServer == "" or settings.fromAddress == "" then
+         error("Mailer is not configured to send password help", 2)
+      end
+      return ctx.db.writeSync(function(conn)
+         local now = os.time()
+         -- Recheck inside the transaction: another link/tab may have revoked this one.
+         if not sqlRow(conn, string.format([[
+SELECT g.id FROM mailer_download_grants g
+JOIN mailer_job_recipients r ON r.id=g.recipient_id
+JOIN mailer_jobs j ON j.id=r.job_id
+WHERE g.id=%d AND g.revoked_at IS NULL AND g.expires_at>=%d
+ AND j.status NOT IN ('cancelled','revoked')
+]], tonumber(grant.id), now)) then return false end
+         local recipient = "lower(email)=lower(" .. quote(grant.email) .. ")"
+         if grant.contact_id then recipient = recipient .. " OR contact_id=" .. tonumber(grant.contact_id) end
+         execute(conn, string.format([[
+UPDATE mailer_download_grants SET revoked_at=%d
+WHERE revoked_at IS NULL AND expires_at>=%d AND recipient_id IN
+ (SELECT id FROM mailer_job_recipients WHERE %s)
+]], now, now, recipient))
+         local count = tonumber(sqlRow(conn, "SELECT changes() AS count").count)
+         local body = "Password help was requested from a download link for " .. grant.email ..
+            ".\nOriginal sender: " .. grant.sender .. ".\n" ..
+            count .. " unexpired download links were invalidated. The password was not changed.\n" ..
+            "Possession of a download link does not verify the recipient's identity. " ..
+            "Verify the recipient independently before resetting their password and sending new links."
+         execute(conn, string.format([[
+INSERT INTO mailer_jobs(sender,status,delivery_mode,subject,text_body,job_type,created_at,queued_at)
+VALUES(%s,'queued','email','FuguHub password help requested',%s,'password-help',%d,%d)
+]], quote(grant.sender), quote(body), now, now))
+         local jobId = insertId(conn)
+         execute(conn, string.format([[
+INSERT INTO mailer_job_recipients(job_id,email) VALUES(%d,%s)
+]], jobId, quote(settings.fromAddress)))
+         execute(conn, string.format([[
+INSERT INTO mailer_download_events(grant_id,event_type,detail,created_at)
+VALUES(%d,'password-help-requested',%s,%d)
+]], tonumber(grant.id), quote("Notification job " .. jobId), now))
+         return true
       end)
    end
 
@@ -2314,7 +1356,7 @@ VALUES(%d,%s,%s,%d)
       local tokenHash = ba.crypto.hash"sha256"(token)(true, "hex")
       local grant = one(ctx, string.format([[
 SELECT g.*,f.relative_path,f.download_name,f.byte_length,f.sha256,
-       j.sender,j.status AS job_status,j.require_contact_password,r.contact_id
+       j.sender,j.status AS job_status,j.require_contact_password,r.contact_id,r.email
 FROM mailer_download_grants g
 JOIN mailer_job_files f ON f.id=g.file_id
 JOIN mailer_job_recipients r ON r.id=g.recipient_id
@@ -2330,36 +1372,82 @@ WHERE g.token_hash=%s
          env.response:senderror(403, "HTTPS is required")
          return true
       end
+      local session = env.request:session(true)
+      local protected = tonumber(grant.require_contact_password) == 1 or grant.password_hash ~= nil
+      local data = env.request:method() == "POST" and (env.request:data() or {}) or nil
+      if protected and data and (not session.mailerDownloadCsrf or
+         not secureEqual(data.csrf, session.mailerDownloadCsrf)) then
+         env.response:senderror(403, "Forbidden")
+         return true
+      end
+      local function page(message, requested, locked)
+         session.mailerDownloadCsrf = not requested and ba.b64urlencode(ba.rndbs(24)) or nil
+         env.response:setcontenttype("text/html; charset=utf-8")
+         env.response:setheader("cache-control", "no-store")
+         env.response:write("<!doctype html><html lang='en'><head><meta charset='utf-8'>",
+            "<meta name='viewport' content='width=device-width,initial-scale=1'>",
+            "<title>", requested and "Password help requested" or "Protected download",
+            "</title><link rel='stylesheet' href='", pluginApp.url("/mailer/public.css"),
+            "'></head><body class='public-page'><main class='public-panel'>",
+            "<h1>", requested and "Password help requested" or "Protected download", "</h1>")
+         if message then
+            env.response:write("<p id='download-message' class='", requested and "success" or "error",
+               "' role='", requested and "status" or "alert", "'>", htmlEscape(message), "</p>")
+         end
+         if not requested then
+            env.response:write("<div class='file-summary'><strong>", htmlEscape(grant.download_name),
+               "</strong><span>Enter your password to download this file.</span></div>",
+               "<form method='post'><input type='hidden' name='csrf' value='", session.mailerDownloadCsrf,
+               "'><label for='download-password'>Password</label>",
+               "<input id='download-password' type='password' name='password' required autocomplete='current-password'",
+               message and " aria-describedby='download-message'" or "",
+               locked and " disabled>" or " autofocus>",
+               "<button type='submit'", locked and " disabled" or "", ">Download file</button></form>",
+               "<section class='preference-danger'><p id='password-help-warning'>Requesting help notifies the mailer administrator and invalidates all your unexpired download links. Your password stays the same.</p>",
+               "<form method='post'><input type='hidden' name='csrf' value='", session.mailerDownloadCsrf,
+               "'><button class='danger' type='submit' name='action' value='password-help' aria-describedby='password-help-warning'>Forgot your password?</button></form></section>")
+         end
+         env.response:write("</main></body></html>")
+         return true
+      end
+      if protected and data and data.action == "password-help" then
+         local ok, requested = pcall(requestPasswordHelp, grant)
+         if not ok then
+            ctx:trace("Password help failed:", tostring(requested))
+            env.response:setstatus(503)
+            return page("Help could not be requested. Your download links are unchanged. Please contact the sender.")
+         end
+         if not requested then
+            env.response:senderror(404, "Download not found")
+            return true
+         end
+         local scheduled, err = pcall(schedule, 1)
+         if not scheduled then ctx:trace("Password help scheduling failed:", tostring(err)) end
+         return page("Your help request has been queued for the mailer administrator. All your unexpired download links have been invalidated. Your password has not changed. The administrator will need to verify your identity and send new links.", true)
+      end
       if tonumber(grant.require_contact_password) == 1 then
          local current = grant.contact_id and one(ctx, [[
 SELECT password_salt,password_hash,password_iterations,confirmed_at
 FROM mailer_contact_credentials WHERE contact_id=]] ..
             tonumber(grant.contact_id)) or nil
          if not current or not current.confirmed_at or not current.password_hash then
-            env.response:senderror(403, "The recipient password is unavailable")
-            return true
+            env.response:setstatus(403)
+            return page("The recipient password is unavailable. You can request help below.", false, true)
          end
          grant.password_salt = current.password_salt
          grant.password_hash = current.password_hash
          grant.password_iterations = current.password_iterations
       end
 
-      local session = env.request:session(true)
       local grantKey = "mailerGrant" .. grant.id
       local passwordError = false
       if grant.password_hash and
          not secureEqual(session[grantKey], grant.password_hash) then
          if tonumber(grant.failed_attempts) >= 5 then
-            env.response:senderror(429, "Too many failed attempts")
-            return true
+            env.response:setstatus(429)
+            return page("Too many failed attempts. You can request help below.", false, true)
          end
-         if env.request:method() == "POST" then
-            local data = env.request:data() or {}
-            if not session.mailerDownloadCsrf or
-               not secureEqual(data.csrf, session.mailerDownloadCsrf) then
-               env.response:senderror(403, "Forbidden")
-               return true
-            end
+         if data then
             local salt = ba.b64decode(grant.password_salt)
             local candidate = passwordDigest(tostring(data.password or ""), salt,
                tonumber(grant.password_iterations))
@@ -2371,44 +1459,23 @@ FROM mailer_contact_credentials WHERE contact_id=]] ..
                   execute(conn, "UPDATE mailer_download_grants SET failed_attempts=" ..
                      "failed_attempts+1 WHERE id=" .. tonumber(grant.id))
                end)
-                logDownload(grant.id, "password-failed", "")
+                logDownload(grant, "password-failed", "")
                 passwordError = true
                if tonumber(grant.failed_attempts) + 1 >= 5 then
-                  env.response:senderror(429, "Too many failed attempts")
-                  return true
+                  env.response:setstatus(429)
+                  return page("Too many failed attempts. You can request help below.", false, true)
                end
             end
          end
          if not secureEqual(session[grantKey], grant.password_hash) then
-            session.mailerDownloadCsrf = ba.b64urlencode(ba.rndbs(24))
-            env.response:setcontenttype("text/html; charset=utf-8")
-            env.response:setheader("cache-control", "no-store")
-            env.response:write("<!doctype html><html><head><meta charset='utf-8'>",
-               "<meta name='viewport' content='width=device-width,initial-scale=1'>",
-               "<title>Protected download</title><link rel='stylesheet' href='",
-               pluginApp.url("/mailer/public.css"),
-               "'></head><body class='public-page'><main class='public-panel'>",
-               "<p class='eyebrow'>Secure file delivery</p>",
-               "<h1>Protected download</h1>",
-               "<div class='file-summary'><strong>", htmlEscape(grant.download_name),
-               "</strong><span>Enter your personal password to download this file.</span></div>")
-            if passwordError then
-               env.response:write("<p class='error' role='alert'>The password is incorrect. Try again.</p>")
-            end
-            env.response:write("<form method='post'>",
-               "<input type='hidden' name='csrf' value='", session.mailerDownloadCsrf,
-               "'><label for='download-password'>Password</label>",
-               "<input id='download-password' type='password' name='password' required ",
-               "autocomplete='current-password' autofocus>",
-               "<button type='submit'>Download file</button></form></main></body></html>")
-            return true
+            return page(passwordError and "The password is incorrect. Try again." or nil)
          end
       end
 
       local current, currentErr = digestFile(files, grant.sender, grant.relative_path)
       if not current or current.size ~= tonumber(grant.byte_length) or
          current.sha256 ~= grant.sha256 then
-         logDownload(grant.id, "file-invalid", tostring(currentErr or "changed"))
+         logDownload(grant, "file-invalid", tostring(currentErr or "changed"))
          env.response:senderror(410, "File is no longer available")
          return true
       end
@@ -2422,15 +1489,33 @@ FROM mailer_contact_credentials WHERE contact_id=]] ..
       env.response:setheader("content-length", tostring(current.size))
       env.response:setheader("content-disposition", 'attachment; filename="' ..
          displayName(grant.download_name) .. '"')
-      if env.request:method() ~= "HEAD" then
+      if env.request:method() == "HEAD" then file:close() return true end
+      local ok, completed, err = pcall(function()
+         local sent, hash = 0, ba.crypto.hash"sha256"
          while true do
-            local chunk = file:read(16384)
+            local chunk, readErr = file:read(16384)
+            if readErr then return nil, readErr end
             if not chunk or #chunk == 0 then break end
-            env.response:write(chunk)
+            sent = sent + #chunk
+            if sent > current.size then return nil, "File changed during download" end
+            hash(chunk)
+            local written, writeErr = env.response:write(chunk)
+            if written ~= #chunk then return nil, writeErr or "Download write failed" end
          end
-      end
+         if sent ~= current.size or hash(true, "hex") ~= grant.sha256 then
+            return nil, "File changed during download"
+         end
+         return env.response:flush(), "Download flush failed"
+      end)
       file:close()
-      logDownload(grant.id, "downloaded", "")
+      if not ok or not completed then
+         ctx:trace("Download failed:", tostring(ok and err or completed))
+         env.response:clearkeepalive()
+         if not env.response:committed() then env.response:senderror(500, "Download failed") end
+         return true
+      end
+      local recorded, recordErr = pcall(logDownload, grant, "download-completed", "")
+      if not recorded then ctx:trace("Download statistics failed:", tostring(recordErr)) end
       return true
    end
 

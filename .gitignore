@@ -8,6 +8,10 @@
 /assets-*/
 /devel-docs/
 /tests/
+!/tests/integration.py
+!/tests/admin_usability.py
+!/tests/cdp_eval.js
+!/tests/run.ps1
 /.locks/
 /mako.conf
 

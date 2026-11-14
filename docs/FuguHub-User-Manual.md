@@ -222,7 +222,10 @@ items, plus the active theme. Use **View Site** to open the public site.
 Open **Content** to view all content or filter it to Pages or Posts. Use **New
 Content** to create an entry, or **Edit** to change an existing one. A **Page**
 has its own address, such as `/about/`. A **Post** belongs to the blog and uses
-the configured Blog Base URL.
+the configured Blog URL prefix.
+
+Use **Search titles and paths** to find an entry. The list shows 50 results per
+page; **Previous** and **Next** retain the search and content-type filter.
 
 #### Create Your First Page
 
@@ -240,11 +243,17 @@ the configured Blog Base URL.
 Use **LSP** (Lua Server Pages) only when the body needs trusted server-side
 application code. Ordinary content can stay in HTML mode.
 
+Saving new content returns to the Content list. When editing existing content,
+**Save** keeps the editor open and shows confirmation beside the button.
+Validation errors keep your entered fields so you can correct them. **Preview**
+shows the saved version; save your changes before previewing. **Cancel** returns
+to the list without saving further changes.
+
 #### Content Fields
 
 | Field | Purpose |
 | --- | --- |
-| Type | A Page has its own public path. A Post is published below the configured Blog Base URL. |
+| Type | A Page has its own public path. A Post is published below the configured Blog URL prefix. |
 | Status | Published content is public. Draft content is available only through its admin Preview link. |
 | Title | Public title supplied to the active theme. |
 | Path | For a page, use a site path such as `/about/`. For a post, use only its article path, such as `/release-notes/`; do not include `/blog/` or another configured blog base. |
@@ -267,9 +276,11 @@ Browser Cache choices control how a browser reuses the response:
 Keep **Default** unless the page needs a different policy.
 
 LSP content is executable server code. Only trusted administrators should add
-or edit it. A draft shows **Preview**; published entries use their normal public
-URL. Deleting content first shows affected menu items, redirects, categories,
-and child content so dependencies can be handled deliberately.
+or edit it. In the Content list, drafts show **Preview** and published entries
+use their normal public URL. The editor offers **Preview** for either status.
+Deleting content first shows affected menu items, redirects, and child paths
+so dependencies can be handled deliberately. Category assignments are removed
+with the content; the categories remain available.
 
 ### Categories
 
@@ -289,9 +300,11 @@ The **Menus** page manages the primary navigation tree.
 
 - **Label** is the text displayed by the theme.
 - **URL** is the destination. A menu link to a post must include the current
-  Blog Base URL, for example `/articles/release-notes/`.
-- **Parent ID** nests an item below another menu item. Leave it blank to infer a
-  parent from the URL, or enter `0` for a top-level item.
+  Blog URL prefix, for example `/articles/release-notes/`.
+- **Parent** lists menu paths by name and shows their destination URLs. Choose
+  **Top level** for a main navigation item, or choose another item to nest it
+  beneath that parent. When adding an item, **Automatic (from URL)** infers a
+  parent from the destination URL. Existing items show their saved parent.
 - **Position** controls ordering among siblings; `0` is valid.
 
 Child items are displayed below their parents in the admin tree. **Hide** keeps
@@ -300,16 +313,21 @@ marked **hidden**, and its action changes to **Show**. Hiding a menu item does
 not unpublish or delete its destination. Deleting a parent promotes its children
 to the top level and does not delete content.
 
+Parent choices refresh after changes. An item cannot select itself or one of
+its descendants. Hidden choices are marked **[hidden]**. If an older menu has
+an invalid parent, choose **Top level** or a valid parent to repair it. A failed
+save keeps the submitted fields and displays an error beside the item.
+
 ### Redirects
 
 Use **Redirects** to map an old path to a new internal or external URL. Enter
-the From path, To URL, and status code. Use `301` for a permanent move and `302`
-for a temporary redirect. Redirect sources must be unique.
+the From path and To URL, then choose **301 - Permanent** or **302 - Temporary**
+from the Status list. Adding an existing From path replaces its target and status.
 
 ### Themes
 
 To change your site's appearance, open **Themes**, select an available theme,
-and choose **Save**. The selection is saved and takes effect immediately,
+and choose **Activate Theme**. The selection is saved and takes effect immediately,
 without restarting Mako.
 
 Install external themes in the runtime directory's `themes/` folder, either as
@@ -330,11 +348,11 @@ Open **Settings** to configure site-wide behavior:
 
 | Setting | Effect |
 | --- | --- |
-| Blog Base URL | Prefix added to every stored Post path. Changing it moves all post URLs without rewriting each post row. Update menu links that point to posts. |
-| Enable HTMX navigation | Updates the page content while keeping the surrounding layout loaded. The theme must support HTMX navigation. |
-| Enable SMQ real-time messaging | Adds live events and browser-to-server calls through Simple Message Queue (SMQ). Requires HTMX navigation to be enabled. |
-| 404 Page URL | Selects the editable CMS page used for unmatched public URLs. |
-| Enable editable 404 page | Installs the low-priority CMS fallback and returns the selected page with HTTP status 404. |
+| Blog URL prefix | Prefix added to every stored Post path. Changing it moves all post URLs without rewriting each post row. Update menu links that point to posts. |
+| Update pages without a full reload (HTMX) | Updates the page content while keeping the surrounding layout loaded. The theme must support HTMX navigation. |
+| Enable live application updates (SMQ) | Adds live events and browser-to-server calls through Simple Message Queue (SMQ). Requires HTMX and application code that uses SMQ. |
+| Page for missing URLs | Selects the editable CMS page used for unmatched public URLs. |
+| Show a custom page for missing URLs | Installs the low-priority CMS fallback and returns the selected page with HTTP status 404. |
 
 HTMX and SMQ are disabled by default. For the application pattern, see
 [LSP and HTMX](https://realtimelogic.com/articles/LSP-htmx-A-Powerful-Duo-for-Embedded-Web-Apps).
@@ -577,11 +595,16 @@ Services. Being a CMS administrator does not automatically grant file access.
    **Public base URL** to the public origin, such as `https://example.com`. Do
    not include `/mailer/` or a CMS base path; the application adds its mounted
    path.
-5. Select **Enabled**.
+5. Select **Enable mail delivery**.
 6. Click **Save and Test** and verify that the test message arrives.
 
 Leaving the password field blank keeps the saved SMTP password. Select
 **Clear saved password** only when it should be removed.
+
+**Save Settings** does not send email and does not require a test recipient.
+**Save and Test** saves first, then sends one test email. If delivery fails,
+the feedback states that the settings were saved and explains the test failure.
+You can save an incomplete connection while mail delivery is disabled.
 
 #### Settings
 
@@ -594,12 +617,17 @@ Leaving the password field blank keeps the saved SMTP password. Select
 | Test recipient | Destination used by **Save and Test**. |
 | Reply-to | Optional reply address. |
 | Public base URL | Public HTTP or HTTPS origin used for download, invitation, and email-preference links. |
-| Attachment limit | Maximum combined byte size for an attachment job. Use secure links for larger files. |
-| Link lifetime | Number of seconds before invitation and download links expire. The default is `604800` seconds (7 days). |
+| Attachment limit (MiB) | Maximum combined file size for an attachment job, from 0 to 1,024 MiB. One MiB is 1,048,576 bytes. Use secure links for larger files. |
+| Link lifetime (days) | Time before invitation and download links expire. Default: 7 days. Fractions are allowed, from 1 minute to 365 days. |
 | Maximum attempts | Maximum SMTP attempts for each recipient. |
 | Retry delay | Initial delay in seconds after a temporary failure. Later retries use increasing delays. |
 | Send interval | Minimum number of seconds between recipients. This controls mass-mail pacing. |
 | Require HTTPS downloads | Rejects non-HTTPS public base URLs and protects download use. |
+
+Maximum attempts, initial retry delay, and send interval are under **Advanced
+delivery settings**. Queue buttons remain disabled while a submission is in
+progress and when delivery is unavailable. Invitations also require a Public
+base URL.
 
 #### Contacts
 
@@ -716,9 +744,12 @@ Download links are appended to the plain-text and HTML bodies automatically.
 Use `{{DOWNLOAD_LINKS}}` only when the links should appear at a particular
 position in the message.
 
-Selecting **Require each recipient's confirmed password** adds a second check.
-Every selected contact must first accept a password invitation. The password is
-personal to that contact and is not an Identity and Access or CMS login password.
+Compose defaults to **Secure download links** with **Require each recipient's
+confirmed password** enabled, both when opened directly and through **Email
+selected files** in File Services. Every selected contact must first accept a
+password invitation. The password is personal to that contact and is not an
+Identity and Access or CMS login password. Clearing the password option allows
+anyone holding a valid link to download the file.
 
 #### Password Invitations
 
@@ -734,6 +765,20 @@ after the configured link lifetime.
 After accepting an invitation, the contact can open deliveries that require a
 confirmed password. Resetting the contact's password requires that contact to
 accept a new invitation.
+
+Protected download pages show **Forgot your password?** immediately, including
+after too many failed attempts. Requesting help queues a notification to the
+mailer's configured **From address** and invalidates all unexpired download
+links for that recipient across this mailer's jobs. It leaves their password
+unchanged. The page explains the revocation before submission and confirms it
+afterward. If the request cannot be saved, the page reports that the links are
+unchanged.
+
+Monitor the From address and **Mailer > Jobs** for these requests and delivery
+failures. Notifications use the normal SMTP retry queue. Anyone possessing a
+valid link can request help, so independently verify the recipient before
+resetting their password and sending new links. A request is not proof of
+identity and does not automatically issue a password invitation or new links.
 
 #### Message Macros
 
@@ -832,6 +877,11 @@ Your files:
 {{DOWNLOAD_LINKS}}
 ```
 
+Use UTF-8 (or US-ASCII) for template text and encoded subjects. Other charsets
+are rejected with an instruction to re-save the template as UTF-8. Plain text,
+HTML, and base64 inline images are imported; ordinary attachments in the EML
+are excluded. Select delivery attachments through File Services.
+
 When a template is selected in Compose, the mailer parses its subject,
 plain-text body, and HTML body into the corresponding editable fields. Changes
 made there apply only to the new delivery; they do not revise the saved
@@ -858,6 +908,19 @@ stored source data, not an exact copy of each personalized email. Generated
 download, invitation, and email-preference links are therefore not displayed.
 For large deliveries, the page shows the first 100 recipients and the total
 recipient count.
+
+For secure-link jobs, expand **Downloads** to see **Successful downloads** and
+**Last downloaded** for each recipient/file pair among those first 100
+recipients. Zero downloads show **Never**. Times use your browser's local time.
+Counts begin with the download-tracking update; older unverified events are
+excluded. A count is added only after the expected file length and content have
+been sent and the server's final response flush succeeds. Password forms, HEAD
+requests, and failed transfers do not count. This records completed server
+transfers, not proof that the recipient saved or opened the file.
+
+Counts survive restarts and replacement links, and are removed when the job's
+history is purged. If recording fails, the server logs the statistics error;
+it does not alter the file already sent or add a partial count.
 
 Cancelling a job stops messages that have not yet been sent. Queued work
 continues after Mako is restarted.

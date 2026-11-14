@@ -63,15 +63,6 @@ sessions per domain. Per-site administrator roles and cross-domain SSO are not
 implemented. Identity rows belong to the control CMS database and are injected
 as a service into consumers, not copied.
 
-## Admin Usability
-
-Potential improvements that preserve the current security and VFS model:
-
-- move the remaining callback-generated content editor markup to LSP only if
-  it materially reduces `admin.lua` complexity;
-- add server-side content search and pagination for large sites;
-- replace numeric menu parent IDs with a hierarchy-oriented selector.
-
 ## Rendered Response Cache
 
 FuguHub intentionally caches source rows rather than complete rendered or

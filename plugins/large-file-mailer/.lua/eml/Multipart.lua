@@ -19,33 +19,28 @@ end
 local function ReadMultipart( aValue, aBoundary )
    local MIME = require( 'eml/Decoder' )
    local aMultipart = { boundary = aBoundary }
+   if not aBoundary or aBoundary == '' then error('missing MIME boundary', 0) end
    local aBoundary = '--' .. aBoundary
-   local aLength = aBoundary:len()
    local aStart = 1
-   local anEnd = nil
+   local partStart
    
    while true do
-      aStart = aValue:find( aBoundary, aStart, true )
-      
-      if aStart then
-         aStart = aStart + aLength
-         anEnd = aValue:find( aBoundary, aStart, true )
-         
-         if anEnd then
-            aStart = aValue:find( '\n', aStart, true ) + 1
-
-            -- MIME() receives LF-normalized input, so strip only the single
-            -- LF that precedes the next boundary marker.
-            aMultipart[ #aMultipart + 1 ] = MIME( aValue:sub( aStart, anEnd - 2 ) )
-         else
-            break
+      local anEnd = aValue:find('\n', aStart, true) or (#aValue + 1)
+      local line = aValue:sub(aStart, anEnd - 1)
+      local suffix = line:sub(#aBoundary + 1)
+      if line:sub(1, #aBoundary) == aBoundary and
+         (suffix:match('^[ \t]*$') or suffix:match('^%-%-[ \t]*$')) then
+         if partStart then
+            -- The LF before a delimiter belongs to the delimiter, not the part.
+            aMultipart[#aMultipart + 1] = MIME(aValue:sub(partStart, aStart - 2))
          end
-      else
-         break
+         if suffix:sub(1, 2) == '--' then return aMultipart end
+         partStart = anEnd + 1
       end
+      if anEnd > #aValue then break end
+      aStart = anEnd + 1
    end
-   
-   return aMultipart
+   error('incomplete MIME multipart', 0)
 end
 
 local function NewMultipart( aValue, aHeader )

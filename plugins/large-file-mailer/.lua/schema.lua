@@ -57,13 +57,14 @@ local function migrateEmailDelivery(conn)
 
    local tables = {
       "mailer_jobs", "mailer_job_recipients", "mailer_job_files",
-      "mailer_download_grants", "mailer_download_events"
+      "mailer_download_grants", "mailer_download_events", "mailer_download_stats"
    }
    local definitions = {}
    for _, name in ipairs(tables) do
       definitions[name] = tableSql(conn, name)
       execute(conn, "CREATE TEMP TABLE " .. name .. "_backup AS SELECT * FROM " .. name)
    end
+   execute(conn, "DROP TABLE mailer_download_stats")
    execute(conn, "DROP TABLE mailer_download_events")
    execute(conn, "DROP TABLE mailer_download_grants")
    execute(conn, "DROP TABLE mailer_job_files")
@@ -73,11 +74,9 @@ local function migrateEmailDelivery(conn)
    execute(conn, "CREATE TABLE mailer_jobs " .. MAILER_JOBS_DEFINITION)
    for index = 2, #tables do execute(conn, definitions[tables[index]]) end
 
-   execute(conn, "INSERT INTO mailer_jobs SELECT * FROM mailer_jobs_backup")
-   execute(conn, "INSERT INTO mailer_job_recipients SELECT * FROM mailer_job_recipients_backup")
-   execute(conn, "INSERT INTO mailer_job_files SELECT * FROM mailer_job_files_backup")
-   execute(conn, "INSERT INTO mailer_download_grants SELECT * FROM mailer_download_grants_backup")
-   execute(conn, "INSERT INTO mailer_download_events SELECT * FROM mailer_download_events_backup")
+   for _, name in ipairs(tables) do
+      execute(conn, "INSERT INTO " .. name .. " SELECT * FROM " .. name .. "_backup")
+   end
    for _, name in ipairs(tables) do execute(conn, "DROP TABLE " .. name .. "_backup") end
 end
 
@@ -253,6 +252,14 @@ CREATE TABLE IF NOT EXISTS mailer_download_events (
    event_type TEXT NOT NULL,
    detail TEXT NOT NULL DEFAULT '',
    created_at INTEGER NOT NULL
+)]] )
+      execute(conn, [[
+CREATE TABLE IF NOT EXISTS mailer_download_stats (
+   recipient_id INTEGER NOT NULL REFERENCES mailer_job_recipients(id) ON DELETE CASCADE,
+   file_id INTEGER NOT NULL REFERENCES mailer_job_files(id) ON DELETE CASCADE,
+   successful_downloads INTEGER NOT NULL,
+   last_downloaded_at INTEGER NOT NULL,
+   PRIMARY KEY(recipient_id,file_id)
 )]] )
       migrateEmailDelivery(conn)
       execute(conn, [[

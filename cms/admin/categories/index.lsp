@@ -26,9 +26,9 @@ response:include(app.url("/admin/includes/start.lsp"), true)
             hx-target="#category-add-status" hx-swap="innerHTML">
          <?lsp admin.csrfField(_ENV) ?>
          <div class="form-grid">
-            <div class="field"><label>Name</label><input name="name" required></div>
-            <div class="field"><label>Slug</label><input name="slug" placeholder="Generated from name"></div>
-            <div class="field full"><label>Description</label><textarea class="short" name="description"></textarea></div>
+            <div class="field"><label for="category-add-name">Name</label><input id="category-add-name" name="name" required></div>
+            <div class="field"><label for="category-add-slug">Slug</label><input id="category-add-slug" name="slug" placeholder="Generated from name"></div>
+            <div class="field full"><label for="category-add-description">Description</label><textarea id="category-add-description" class="short" name="description"></textarea></div>
          </div>
          <div class="actions"><button type="submit" name="action" value="add">Add Category</button></div>
          <div id="category-add-status" class="fragment-status" aria-live="polite"></div>

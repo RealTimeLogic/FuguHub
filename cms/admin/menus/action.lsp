@@ -9,6 +9,8 @@ local data = admin.requestData(_ENV)
 local ok, row = pcall(admin.mutateMenu, app, data)
 local message
 if not ok then
+   adminMenuError = true
+   adminMenuDraft = data.action == "update" and data or nil
    if type(row) == "table" and row.cmsValidation then
       message = row.message
    else

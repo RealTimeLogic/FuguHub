@@ -3,7 +3,8 @@ local admin = app.appreq "admin"
 if not admin.guardLsp(_ENV, app, true) then return end
 local data = admin.requestData(_ENV)
 local row
-for _, candidate in ipairs(admin.menuTreeItems(app)) do
+local items = admin.menuTreeItems(app)
+for _, candidate in ipairs(items) do
    if tonumber(candidate.id) == tonumber(data.id) then
       row = candidate
       break
@@ -14,5 +15,5 @@ if not row then
    return
 end
 response:include(app.url("/admin/menus/item-template.lsp"), true)
-adminRenderMenuItem(row)
+adminRenderMenuItem(row, nil, items)
 ?>

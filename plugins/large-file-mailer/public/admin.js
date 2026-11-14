@@ -27,9 +27,21 @@
       return parent;
    }
 
-   function field(label, input) {
-      return add(el("div", { className: "field" }),
-         el("label", { text: label }), input);
+   var field = window.FuguHubAdmin.field;
+
+   function number(name, value, min, max, step) {
+      var input = el("input", { name: name, type: "number", value: value, required: true });
+      input.min = min;
+      input.max = max;
+      input.step = step || "1";
+      return input;
+   }
+
+   function group(title, fields) {
+      var section = el("fieldset");
+      var grid = el("div", { className: "mailer-grid" });
+      fields.forEach(function (item) { grid.appendChild(item); });
+      return add(section, el("legend", { text: title }), grid);
    }
 
    function read(response) {
@@ -46,6 +58,9 @@
 
    function save(form, action) {
       var data = new FormData(form);
+      // The wire format remains integer bytes/seconds; the form uses MiB/days.
+      data.set("attachment_limit", String(Math.round(Number(data.get("attachment_limit")) * 1048576)));
+      data.set("grant_ttl", String(Math.round(Number(data.get("grant_ttl")) * 86400)));
       data.set("_csrf", csrf);
       data.set("action", action);
       return fetch("api/", {
@@ -53,7 +68,7 @@
       }).then(read);
    }
 
-   function render(payload, previousTestRecipient) {
+   function render(payload, previousTestRecipient, focusTest) {
       var settings = payload.settings;
       root.replaceChildren();
       root.appendChild(el("p", {
@@ -62,13 +77,13 @@
       }));
       var form = el("form", { className: "mailer-form" });
       form.autocomplete = "off";
+      var saving = false;
       var fromAddress = el("input", {
-         name: "from_address", value: settings.fromAddress, required: true
+         name: "from_address", value: settings.fromAddress
       });
       var testRecipient = el("input", {
          name: "test_recipient",
-         value: previousTestRecipient || settings.fromAddress,
-         required: true
+         value: previousTestRecipient === undefined ? settings.fromAddress : previousTestRecipient
       });
       var testRecipientChanged = Boolean(previousTestRecipient);
       testRecipient.addEventListener("input", function () {
@@ -78,19 +93,16 @@
          if (!testRecipientChanged) testRecipient.value = fromAddress.value;
       });
       var security = el("select", { name: "smtp_security" });
-      ["none", "tls", "starttls"].forEach(function (value) {
-         var option = el("option", { value: value, text: value });
-         option.selected = settings.smtpSecurity === value;
+      [["none", "None (unencrypted)"], ["tls", "TLS from connection start"],
+         ["starttls", "STARTTLS (upgrade connection)"]].forEach(function (item) {
+         var option = el("option", { value: item[0], text: item[1] });
+         option.selected = settings.smtpSecurity === item[0];
          security.appendChild(option);
       });
-      var grid = el("div", { className: "mailer-grid" });
-      add(grid,
-         field("SMTP server", el("input", {
-            name: "smtp_server", value: settings.smtpServer, required: true
-         })),
-         field("SMTP port", el("input", {
-            name: "smtp_port", type: "number", value: settings.smtpPort, required: true
-         })),
+      var smtpServer = el("input", { name: "smtp_server", value: settings.smtpServer });
+      form.appendChild(group("SMTP connection", [
+         field("SMTP server", smtpServer, "Hostname or IP address supplied by your email provider."),
+         field("SMTP port", number("smtp_port", settings.smtpPort, 1, 65535)),
          field("Security", security),
          field("Username", el("input", {
             name: "smtp_username", value: settings.smtpUsername,
@@ -100,33 +112,33 @@
             name: "password", type: "password",
             value: "", autocomplete: "new-password",
             placeholder: settings.passwordConfigured ? "Saved; leave blank to keep" : ""
-         })),
-         field("From address", fromAddress),
-         field("Test recipient", testRecipient),
+         }))
+      ]));
+      form.appendChild(group("Sender", [
+         field("From address", fromAddress, "An email address, or Name <address@example.com>."),
          field("Reply-to", el("input", {
             name: "reply_to", value: settings.replyTo
-         })),
+         }), "Optional. Replies go here instead of the From address.")
+      ]));
+      form.appendChild(group("Files and download links", [
          field("Public base URL", el("input", {
             name: "public_base_url", value: settings.publicBaseUrl,
             placeholder: "https://example.com"
-         })),
-         field("Attachment limit (bytes)", el("input", {
-            name: "attachment_limit", type: "number", value: settings.attachmentLimit
-         })),
-         field("Link lifetime (seconds)", el("input", {
-            name: "grant_ttl", type: "number", value: settings.grantTtl
-         })),
-         field("Maximum attempts", el("input", {
-            name: "max_attempts", type: "number", value: settings.maxAttempts
-         })),
-         field("Retry delay (seconds)", el("input", {
-            name: "retry_base", type: "number", value: settings.retryBase
-         })),
-         field("Send interval (seconds)", el("input", {
-            name: "send_interval", type: "number", value: settings.sendInterval
-         }))
-      );
-      form.appendChild(grid);
+         }), "The address recipients can reach, including a port if needed. Omit application paths."),
+         field("Attachment limit (MiB)", number("attachment_limit", settings.attachmentLimit / 1048576,
+            0, 1024, "any"), "1 MiB = 1,048,576 bytes. Maximum 1,024 MiB."),
+         field("Link lifetime (days)", number("grant_ttl", settings.grantTtl / 86400,
+            60 / 86400, 365, "any"), "Fractions are allowed; minimum 1 minute, maximum 365 days.")
+      ]));
+      var advanced = el("details", { className: "mailer-advanced" });
+      add(advanced, el("summary", { text: "Advanced delivery settings" }),
+         group("Delivery retries", [
+            field("Maximum attempts", number("max_attempts", settings.maxAttempts, 1, 20)),
+            field("Initial retry delay (seconds)", number("retry_base", settings.retryBase, 1, 86400),
+               "The delay doubles after each failed attempt."),
+            field("Send interval (seconds)", number("send_interval", settings.sendInterval, 1, 3600))
+         ]));
+      form.appendChild(advanced);
       var flags = el("div", { className: "mailer-flags" });
       var enabled = el("input", { name: "enabled", type: "checkbox", value: "1" });
       enabled.checked = settings.enabled;
@@ -138,29 +150,46 @@
          name: "clear_password", type: "checkbox", value: "1"
       });
       add(flags,
-         add(el("label"), enabled, document.createTextNode("Enabled")),
+         add(el("label"), enabled, document.createTextNode("Enable mail delivery")),
          add(el("label"), https, document.createTextNode("Require HTTPS downloads")),
          add(el("label"), clear, document.createTextNode("Clear saved password"))
       );
       form.appendChild(flags);
+      form.appendChild(field("Test recipient", testRecipient,
+         "Used only by Save and Test, which saves these settings and sends one test email."));
       var saveButton = el("button", { type: "button", text: "Save Settings" });
-      saveButton.addEventListener("click", function () {
-         if (!form.reportValidity()) return;
-         message("Saving...", false);
-         save(form, "save-settings").then(function (next) {
-            render(next, testRecipient.value);
-            message("Settings saved.", false);
-         }).catch(function (error) { message(error.message, true); });
-      });
       var testButton = el("button", { type: "button", text: "Save and Test" });
-      testButton.addEventListener("click", function () {
-         if (!form.reportValidity()) return;
-         message("Saving and sending test message...", false);
-         save(form, "save-and-test").then(function (next) {
-            render(next, testRecipient.value);
-            message("Settings saved. Test message sent to " +
-               next.testRecipient + ".", false);
-         }).catch(function (error) { message(error.message, true); });
+      function submit(test) {
+         if (saving) return;
+         smtpServer.required = fromAddress.required = enabled.checked || test;
+         testRecipient.required = test;
+         form.querySelectorAll(":invalid").forEach(function (input) {
+            var details = input.closest("details");
+            if (details) details.open = true;
+         });
+         var valid = form.reportValidity();
+         testRecipient.required = false;
+         if (!valid) return;
+         saving = true;
+         saveButton.disabled = testButton.disabled = true;
+         message(test ? "Saving and sending test message..." : "Saving...", false);
+         save(form, test ? "save-and-test" : "save-settings").then(function (next) {
+            render(next, testRecipient.value, test);
+            message(test ? "Settings saved. Test message sent to " + next.testRecipient + "." :
+               "Settings saved.", false);
+         }).catch(function (error) {
+            if (error.payload && error.payload.saved) render(error.payload, testRecipient.value, test);
+            message(error.message, true);
+         }).finally(function () {
+            saving = false;
+            saveButton.disabled = testButton.disabled = false;
+         });
+      }
+      saveButton.addEventListener("click", function () { submit(false); });
+      testButton.addEventListener("click", function () { submit(true); });
+      form.addEventListener("submit", function (event) {
+         event.preventDefault();
+         submit(false);
       });
       add(form, add(el("div", { className: "mailer-actions" }),
          saveButton, testButton));
@@ -170,6 +199,7 @@
       actionMessage.setAttribute("aria-live", "polite");
       form.appendChild(actionMessage);
       root.appendChild(form);
+      if (focusTest !== undefined) (focusTest ? testButton : saveButton).focus();
    }
 
    fetch("api/", { credentials: "same-origin" })

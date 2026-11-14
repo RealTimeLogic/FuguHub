@@ -1,43 +1,16 @@
-local http = appreq "cmshttp"
+local publicError = appreq "publicerror"
 
 local M = {}
-local ADMIN_CSS_VERSION = "20260702-1"
-
-local function esc(value)
-   return http.html(value)
-end
 
 local function state(app)
    return app.adminAuth
 end
 
 local function loginResponse(app, env, authinfo)
-   authinfo = authinfo or {}
+   env.adminLogin = authinfo or {}
    env.response:setcontenttype("text/html; charset=utf-8")
    env.response:setheader("x-content-type-options", "nosniff")
-   env.response:write("<!doctype html><html><head><meta charset='utf-8'>")
-   env.response:write("<meta name='viewport' content='width=device-width, initial-scale=1'>")
-   env.response:write("<title>Admin Login - CMS Admin</title>")
-   env.response:write("<link rel='stylesheet' href='",
-      app.url("/admin/admin.css?v=" .. ADMIN_CSS_VERSION), "'>")
-   env.response:write("<script src='/rtl/jquery.js'></script>")
-   env.response:write("<script src='/rtl/sha1.js'></script>")
-   env.response:write("</head><body><main class='login-shell'>")
-   env.response:write("<section class='login-panel'><h1>CMS Admin</h1>")
-   env.response:write("<p class='muted'>Sign in to manage content, themes, and settings.</p>")
-   if authinfo.username then
-      env.response:write("<div class='notice'>Login failed for ",
-         esc(authinfo.username), ".</div>")
-   end
-   env.response:write("<form method='post'>")
-   env.response:write("<div class='field'><label>Username</label><input name='ba_username' autocomplete='username' autofocus required></div>")
-   env.response:write("<div class='field'><label>Password</label><input name='ba_password' type='password' autocomplete='current-password' required></div>")
-   env.response:write("<input type='hidden' name='ba_seed' value='",
-      esc(authinfo.seed), "'>")
-   env.response:write("<input type='hidden' name='ba_seedkey' value='",
-      esc(authinfo.seedkey), "'>")
-   env.response:write("<div class='actions'><input class='button' type='button' id='ba_loginbut' value='Login'></div>")
-   env.response:write("</form></section></main></body></html>")
+   env.response:include(app.url("/admin/.login.lsp"), true)
    return true
 end
 
@@ -135,7 +108,7 @@ function M.info(app)
          app.identityManagementUrl,
       status = auth.status or "unconfigured",
       enabled = auth.installed == true,
-      reason = auth.reason
+      reason = auth.reason and publicError(auth.reason)
    }
 end
 
@@ -221,7 +194,7 @@ end
 
 function M.reason(app)
    local auth = state(app)
-   return auth and auth.reason or nil
+   return auth and auth.reason and publicError(auth.reason) or nil
 end
 
 local function hasRole(user, role)
@@ -285,12 +258,12 @@ function M.setUser(app, name, password)
          }, "cms-admin")
       end
    end)
-   return ok, ok and nil or tostring(err)
+   return ok, not ok and publicError(err) or nil
 end
 
 function M.reset(app, actor)
    local ok, err = pcall(app.identity.reset, actor or "cms-admin")
-   return ok, ok and nil or tostring(err)
+   return ok, not ok and publicError(err) or nil
 end
 
 return M

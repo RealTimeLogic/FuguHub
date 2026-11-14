@@ -499,9 +499,11 @@ function M.start(ctx, identity, pluginApp)
 
    function service.state()
       local assigned = {}
+      local enabled = {}
       for _, user in ipairs(identity.users()) do
          for _, roleName in ipairs(user.roles or {}) do
             assigned[roleName] = (assigned[roleName] or 0) + 1
+            if not user.disabled then enabled[roleName] = (enabled[roleName] or 0) + 1 end
          end
       end
       local snapshot = {
@@ -541,7 +543,8 @@ function M.start(ctx, identity, pluginApp)
             snapshot.roles[#snapshot.roles + 1] = {
                name = role.name,
                description = role.description,
-               assignedUsers = assigned[role.name] or 0
+               assignedUsers = assigned[role.name] or 0,
+               enabledUsers = enabled[role.name] or 0
             }
          end
       end

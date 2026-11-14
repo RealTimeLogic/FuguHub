@@ -20,6 +20,7 @@
    var composeContactSearchSequence = 0;
    var noticeText = "";
    var noticeError = false;
+   var editorBusy = false;
 
    function el(tag, options) {
       var node = document.createElement(tag);
@@ -47,7 +48,64 @@
 
    function button(text, className, handler) {
       var node = el("button", { type: "button", text: text, className: className || "" });
-      node.addEventListener("click", handler);
+      node.addEventListener("click", function () { if (!editorBusy) handler(); });
+      return node;
+   }
+
+   function editorSubmit(form, text, save) {
+      form.addEventListener("submit", function (event) {
+         event.preventDefault();
+         if (editorBusy) return;
+         editorBusy = true;
+         var controls = Array.from(root.querySelectorAll("button:enabled, input:enabled, select:enabled, textarea:enabled"));
+         controls.forEach(function (node) { node.disabled = true; });
+         root.setAttribute("aria-busy", "true");
+         message("Saving...", false);
+         Promise.resolve().then(save).catch(function (error) {
+            message(error.message, true);
+         }).finally(function () {
+            editorBusy = false;
+            controls.forEach(function (node) { node.disabled = false; });
+            root.removeAttribute("aria-busy");
+            var target = document.getElementById("client-message");
+            target.tabIndex = -1;
+            target.focus({ preventScroll: true });
+            target.scrollIntoView({ block: "nearest" });
+         });
+      });
+      return el("button", { type: "submit", text: text, className: "primary" });
+   }
+
+   function showEditor(host, form) {
+      host.editorTrigger = document.activeElement;
+      host.replaceChildren(form);
+      form.querySelector("input, textarea").focus({ preventScroll: true });
+      form.scrollIntoView({ block: "nearest" });
+   }
+
+   function closeEditor(host) {
+      host.replaceChildren();
+      if (host.editorTrigger && host.editorTrigger.isConnected) host.editorTrigger.focus();
+   }
+
+   function deliveryButton(text, handler, needsPublicUrl) {
+      var reason = !state.user ? "Create an administrator account first" :
+         !state.settings.enabled ? "Enable the mailer in Settings first" :
+         needsPublicUrl && !state.settings.publicBaseUrl ? "Set the Public base URL first" : "";
+      var node = button(text, "primary", function () {
+         if (node.disabled) return;
+         // Lock before EML parsing or any other asynchronous work can yield.
+         node.disabled = true;
+         node.setAttribute("aria-busy", "true");
+         Promise.resolve().then(handler)
+            .catch(function (error) { message(error.message, true); })
+            .finally(function () {
+               node.disabled = Boolean(reason);
+               node.removeAttribute("aria-busy");
+            });
+      });
+      node.disabled = Boolean(reason);
+      node.title = reason;
       return node;
    }
 
@@ -242,7 +300,7 @@
       var meta = el("dl", { className: "job-meta" });
       [
          ["Created by", job.sender], ["Status", job.status],
-         ["Delivery mode", job.deliveryMode], ["Job type", job.jobType],
+         ["Delivery mode", job.deliveryMode], ["Job type", job.jobType === "password-help" ? "Password help" : job.jobType],
          ["Created", formatTime(job.createdAt)], ["Queued", formatTime(job.queuedAt)],
          ["Completed", formatTime(job.completedAt)], ["Cancelled", formatTime(job.cancelledAt)]
       ].forEach(function (item) {
@@ -300,6 +358,30 @@
       tableHost.appendChild(table);
       recipients.appendChild(tableHost);
       detail.appendChild(recipients);
+      if (job.deliveryMode === "link") {
+         var downloads = el("details");
+         downloads.appendChild(el("summary", { text: "Downloads" }));
+         downloads.appendChild(el("p", { className: "muted", text:
+            "Completed server transfers since download tracking was enabled. Older unverified events are excluded. Counts cover the recipients shown above." }));
+         var downloadTable = el("table", { className: "job-recipient-table job-download-table" });
+         var downloadHead = el("tr");
+         ["Recipient", "File", "Successful downloads", "Last downloaded"].forEach(function (label) {
+            downloadHead.appendChild(el("th", { text: label }));
+         });
+         downloadTable.appendChild(add(el("thead"), downloadHead));
+         var downloadBody = el("tbody");
+         asArray(job.downloads).forEach(function (download) {
+            var row = el("tr");
+            [download.email, download.name, download.successfulDownloads,
+               download.lastDownloadedAt ? formatTime(download.lastDownloadedAt) : "Never"].forEach(function (value) {
+               row.appendChild(el("td", { text: value }));
+            });
+            downloadBody.appendChild(row);
+         });
+         downloadTable.appendChild(downloadBody);
+         downloads.appendChild(add(el("div", { className: "table-scroll" }), downloadTable));
+         detail.appendChild(downloads);
+      }
       return detail;
    }
 
@@ -355,7 +437,9 @@
       var target = document.getElementById("client-message");
       if (!target) return;
       target.textContent = noticeText;
+      target.setAttribute("aria-label", noticeText);
       target.classList.toggle("error", noticeError);
+      target.setAttribute("role", noticeError ? "alert" : "status");
    }
 
    function notice(extraClass) {
@@ -365,6 +449,7 @@
          text: noticeText
       });
       node.id = "client-message";
+      node.setAttribute("role", noticeError ? "alert" : "status");
       return node;
    }
 
@@ -537,6 +622,7 @@
       root.replaceChildren();
       var section = el("section", { className: "workspace" });
       section.appendChild(el("h1", { text: "Compose Delivery" }));
+      addAccountWarning(section);
       if (!state.settings.enabled) {
          section.appendChild(el("p", { className: "warning", text: "The mailer is disabled by the CMS administrator." }));
       }
@@ -555,13 +641,15 @@
       });
       var mode = el("select", { className: "delivery-mode" });
       [
+         ["link", "Secure download links"],
          ["email", "Email only"],
-         ["attachment", "File attachments"],
-         ["link", "Secure download links"]
+         ["attachment", "File attachments"]
       ].forEach(function (option) {
          mode.appendChild(el("option", { value: option[0], text: option[1] }));
       });
+      mode.value = "link";
       var requirePassword = el("input", { type: "checkbox", value: "1" });
+      requirePassword.checked = true;
       var template = el("select");
       template.appendChild(el("option", { value: "", text: "No template" }));
       state.templates.forEach(function (item) {
@@ -629,10 +717,11 @@
          requirePassword.disabled = mode.value !== "link";
          if (mode.value !== "link") requirePassword.checked = false;
          var help = form.querySelector(".password-help");
-         if (help) help.hidden = mode.value !== "link";
+         if (help) help.hidden = mode.value !== "link" || !requirePassword.checked;
          linkPlacementHelp.hidden = mode.value !== "link";
       }
       mode.addEventListener("change", updateDeliveryMode);
+      requirePassword.addEventListener("change", updateDeliveryMode);
       try {
          var handoffKey = "fuguhub.mailer.selection:" + window.location.pathname;
          var handoff = window.sessionStorage.getItem(handoffKey);
@@ -643,7 +732,6 @@
                return typeof path === "string" && path.charAt(0) === "/";
             })) {
                files.value = selectedPaths.join("\n");
-               mode.value = "attachment";
             }
          }
       } catch (ignore) {}
@@ -653,9 +741,16 @@
       var lists = choices(state.lists, "Lists", null, true);
       add(recipientGrid, contacts, lists);
       form.appendChild(recipientGrid);
-      var queueButton = button("Queue Delivery", "primary", function () {
-         emlEditor.whenReady().then(function () {
+      var queueButton = deliveryButton("Queue Delivery", function () {
+         return emlEditor.whenReady().then(function () {
             if (!form.reportValidity()) return;
+            var messageSource = subject.value + "\n" + textBody.value + "\n" +
+               htmlBody.value;
+            if (mode.value !== "link" &&
+                  messageSource.indexOf("{{DOWNLOAD_LINKS}}") !== -1) {
+               message("{{DOWNLOAD_LINKS}} can only be used with Secure download links.", true);
+               return;
+            }
             var paths = mode.value === "email" ? [] :
                files.value.split(/\r?\n/).map(function (value) { return value.trim(); })
                   .filter(Boolean);
@@ -674,7 +769,7 @@
                renderCompose();
                message("Delivery job " + payload.job.id + " queued.", false);
             });
-         }).catch(function (error) { message(error.message, true); });
+         });
       });
       var composeActions = el("div", { className: "compose-actions" });
       add(composeActions, queueButton, notice("compose-message"));
@@ -685,7 +780,7 @@
 
    function contactEditor(contact, onClose) {
       var form = el("form", { className: "editor" });
-      var email = el("input", { value: contact ? contact.email : "", required: true });
+      var email = el("input", { type: "email", value: contact ? contact.email : "", required: true });
       var first = el("input", { value: contact ? contact.firstName : "" });
       var last = el("input", { value: contact ? contact.lastName : "" });
       var external = el("input", { value: contact ? contact.externalId || "" : "" });
@@ -694,24 +789,22 @@
       add(form, field("Email", email), field("First name", first),
          field("Last name", last),
          field("External ID", external), memberships);
-      form.appendChild(button(contact ? "Save Contact" : "Add Contact", "primary", function () {
-         request({ action: "save-contact", id: contact ? contact.id : "",
+      form.appendChild(editorSubmit(form, contact ? "Save Contact" : "Add Contact", function () {
+         return request({ action: "save-contact", id: contact ? contact.id : "",
             email: email.value, first_name: first.value,
             last_name: last.value, external_id: external.value,
             list_ids: JSON.stringify(checkedValues(memberships)) }).then(function (payload) {
                state = payload;
-               if (onClose) onClose();
-               else renderView();
+               renderView();
                message("Contact saved.", false);
-            })
-            .catch(function (error) { message(error.message, true); });
+            });
       }));
       if (contact && contact.confirmed) {
          form.appendChild(button("Reset password", "danger", function () {
             if (!window.confirm("Reset this contact's download password? Existing protected links will stop working until a new invitation is accepted.")) return;
             request({ action: "reset-contact-password", id: contact.id }).then(function (payload) {
                state = payload;
-               if (onClose) onClose();
+               if (onClose) onClose(true);
                else renderView();
                message("Password reset. Send the contact a new invitation.", false);
             }).catch(function (error) { message(error.message, true); });
@@ -725,7 +818,7 @@
                "No list memberships will be restored.")) return;
             request({ action: "resubscribe-contact", id: contact.id }).then(function (payload) {
                state = payload;
-               if (onClose) onClose();
+               if (onClose) onClose(true);
                else renderView();
                message("Email restored. Add the contact to lists when appropriate.", false);
             }).catch(function (error) { message(error.message, true); });
@@ -740,19 +833,17 @@
       var name = el("input", { value: list ? list.name : "", required: true });
       var description = el("input", { value: list ? list.description : "" });
       add(form, field("Name", name), field("Description", description));
-      form.appendChild(button(list ? "Save List" : "Add List", "primary", function () {
-         request({ action: "save-list", id: list ? list.id : "", name: name.value,
+      form.appendChild(editorSubmit(form, list ? "Save List" : "Add List", function () {
+         return request({ action: "save-list", id: list ? list.id : "", name: name.value,
             description: description.value }).then(function (payload) {
                if (!list && payload.savedListId) {
                   window.location.href = window.location.pathname + "?id=" + payload.savedListId;
                   return;
                }
                state = payload;
-               if (onClose) onClose();
-               else renderLists();
+               renderLists();
                message("List saved.", false);
-            })
-            .catch(function (error) { message(error.message, true); });
+            });
       }));
       if (onClose) form.appendChild(button("Cancel", "secondary", onClose));
       return form;
@@ -764,10 +855,12 @@
       var source = el("textarea", { required: true, placeholder: "Paste an EML message" });
       source.value = template ? template.source : "";
       add(form, field("Name", name), field("EML source", source));
-      form.appendChild(button(template ? "Save Template" : "Add Template", "primary", function () {
-         request({ action: "save-template", id: template ? template.id : "",
-            name: name.value, source: source.value }).then(updateView)
-            .catch(function (error) { message(error.message, true); });
+      form.appendChild(editorSubmit(form, template ? "Save Template" : "Add Template", function () {
+         return request({ action: "save-template", id: template ? template.id : "",
+            name: name.value, source: source.value }).then(function (payload) {
+               updateView(payload);
+               message("Template saved.", false);
+            });
       }));
       return form;
    }
@@ -783,12 +876,21 @@
       if (!localFeedback) root.appendChild(notice());
       var section = el("section", { className: "workspace" });
       section.appendChild(el("h1", { text: title }));
+      addAccountWarning(section);
       root.appendChild(section);
       return section;
    }
 
+   function addAccountWarning(section) {
+      if (!state.user) {
+         section.appendChild(el("p", { className: "warning", text:
+            "Mailer sending is disabled until an administrator account and password are set." }));
+      }
+   }
+
    function destinationSelect(excludeId) {
       var select = el("select");
+      select.setAttribute("aria-label", "Destination list");
       select.appendChild(el("option", { value: "", text: "Select a list" }));
       state.lists.forEach(function (list) {
          if (Number(list.id) !== Number(excludeId)) {
@@ -817,6 +919,7 @@
       var table = el("table", { className: "contact-table" });
       var head = el("tr");
       var selectAll = el("input", { type: "checkbox" });
+      selectAll.setAttribute("aria-label", "Select all contacts on this page");
       add(head, add(el("th"), selectAll), el("th", { text: "Email" }),
          el("th", { text: "First name" }), el("th", { text: "Last name" }),
          el("th", { text: "Email status" }), el("th", { text: "Password" }),
@@ -826,12 +929,12 @@
       state.contacts.items.forEach(function (contact) {
          var row = el("tr");
          var selected = el("input", { type: "checkbox", value: contact.id });
+         selected.setAttribute("aria-label", "Select " + contact.email);
          var edit = button(contact.email, "link-button", function () {
-            editorHost.replaceChildren(contactEditor(contact, function () {
-               editorHost.replaceChildren();
-               refreshContactResults(result, editorHost, listId);
+            showEditor(editorHost, contactEditor(contact, function (changed) {
+               closeEditor(editorHost);
+               if (changed) refreshContactResults(result, editorHost, listId);
             }));
-            editorHost.scrollIntoView({ behavior: "smooth", block: "nearest" });
          });
          var memberships = el("td");
          if (!contact.listNames.length) {
@@ -983,6 +1086,7 @@
       var search = el("input", {
          value: contactQuery, placeholder: "Search by email, first name, or last name"
       });
+      search.setAttribute("aria-label", "Search contacts");
       liveSearch(search, function () {
          refreshContactResults(resultHost.firstChild, editorHost, listId);
       });
@@ -1106,8 +1210,8 @@
       });
       var toolbar = add(el("div", { className: "view-toolbar" }),
          button("New Contact", "primary", function () {
-            editorHost.replaceChildren(contactEditor(null, function () {
-               editorHost.replaceChildren();
+            showEditor(editorHost, contactEditor(null, function () {
+               closeEditor(editorHost);
             }));
          }), field("Show", filter));
       add(page, toolbar, editorHost, searchBar(resultHost, editorHost, null), resultHost);
@@ -1130,8 +1234,8 @@
       var editorHost = el("div", { className: "editor-host" });
       page.appendChild(add(el("div", { className: "view-toolbar" }),
          button("New List", "primary", function () {
-            editorHost.replaceChildren(listEditor(null, function () {
-               editorHost.replaceChildren();
+            showEditor(editorHost, listEditor(null, function () {
+               closeEditor(editorHost);
             }));
          })));
       page.appendChild(editorHost);
@@ -1155,8 +1259,8 @@
              add(el("td", { className: "row-actions" }),
                 manageLink,
                 button("Edit", "secondary", function () {
-                  editorHost.replaceChildren(listEditor(list, function () {
-                     editorHost.replaceChildren();
+                  showEditor(editorHost, listEditor(list, function () {
+                     closeEditor(editorHost);
                   }));
                }),
                button("Delete", "danger", function () {
@@ -1200,8 +1304,8 @@
       var editorHost = el("div", { className: "editor-host" });
       var toolbar = el("div", { className: "view-toolbar" });
       toolbar.appendChild(button("Edit List", "secondary", function () {
-             editorHost.replaceChildren(listEditor(state.list, function () {
-                editorHost.replaceChildren();
+             showEditor(editorHost, listEditor(state.list, function () {
+                closeEditor(editorHost);
              }));
           }));
       var hasDestination = state.lists.some(function (list) {
@@ -1337,7 +1441,7 @@
          var row = el("div", { className: "data-row" });
          add(row, el("span", { text: template.name + " r" + template.revision }),
             button("Edit", "secondary", function () {
-               templateEditorHost.replaceChildren(templateEditor(template));
+               showEditor(templateEditorHost, templateEditor(template));
             }),
             button("Delete", "danger", function () {
                if (!window.confirm("Delete " + template.name + "?")) return;
@@ -1403,6 +1507,10 @@
 
    function renderInvitations() {
       var page = workspace("Password Invitations", true);
+      if (!state.settings.enabled) {
+         page.appendChild(el("p", { className: "warning", text:
+            "Sending is disabled. Enable the mailer in Settings before sending invitations." }));
+      }
       var stats = state.confirmation || {
          total: 0, confirmed: 0, unconfirmed: 0, invited: 0
       };
@@ -1437,7 +1545,15 @@
       var htmlBody = el("textarea", {
          placeholder: "Optional HTML invitation, or paste a complete EML"
       });
-      var emlEditor = smartEmlEditor(subject, textBody, htmlBody, null);
+      var template = el("select");
+      template.appendChild(el("option", { value: "", text: "No template" }));
+      (state.templates || []).forEach(function (item) {
+         template.appendChild(el("option", { value: item.id, text: item.name }));
+      });
+      var templateField = field("Template", template);
+      templateField.appendChild(el("small", { text:
+         "Selecting a template loads an editable copy into the invitation fields." }));
+      var emlEditor = smartEmlEditor(subject, textBody, htmlBody, template);
       var linkHelp = el("p", { className: "muted link-placement-help" });
       linkHelp.appendChild(document.createTextNode(
          "The password setup link is appended automatically. Use "));
@@ -1447,8 +1563,8 @@
       var contacts = composeContactPicker();
       var lists = choices(state.lists, "Recipient lists", null, true);
       var recipientGrid = add(el("div", { className: "recipient-grid" }), contacts, lists);
-      var queueButton = button("Queue Invitations", "primary", function () {
-         emlEditor.whenReady().then(function () {
+      var queueButton = deliveryButton("Queue Invitations", function () {
+         return emlEditor.whenReady().then(function () {
             if (!form.reportValidity()) return;
             var contactIds = composeContactIds();
             var listIds = checkedValues(lists);
@@ -1470,14 +1586,13 @@
                renderInvitations();
                message("Invitation job " + payload.job.id + " queued.", false);
             });
-         }).catch(function (error) { message(error.message, true); });
-      });
-      queueButton.disabled = !publicBaseUrl;
-      if (!publicBaseUrl) queueButton.title = "Set the Public base URL first";
+         });
+      }, true);
       var invitationActions = add(el("div", { className: "compose-actions" }),
          queueButton, notice("invitation-message"));
       add(form,
          field("Subject", subject),
+         templateField,
          field("Plain text invitation", textBody),
          field("Optional HTML invitation", htmlBody),
          linkHelp,

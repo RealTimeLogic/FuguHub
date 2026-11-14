@@ -1,4 +1,5 @@
 local M = {}
+local publicError = app.appreq "publicerror"
 
 local function serveFile(env, ctx, path, contentType)
    local file, err = ctx.io:open(path, "rb")
@@ -55,7 +56,7 @@ local function api(env, ctx, files)
    end)
    if not ok then
       env.response:setstatus(400)
-      env.response:json({ ok = false, error = tostring(err) })
+      env.response:json({ ok = false, error = publicError(err) })
       return true
    end
    env.response:json(responseState(files))
@@ -75,7 +76,7 @@ function M.install(ctx, files)
                "<section class='panel file-service-shell'><div class='panel-body'>")
             ctx.admin:csrfField(env)
             env.response:write(
-               "<div id='file-service-app' aria-live='polite'>",
+               "<div id='file-service-app'>",
                "Loading file-service data...</div>",
                "</div></section><script src='admin.js' defer></script>")
          end)

@@ -1,4 +1,5 @@
 local M = {}
+local publicError = app.appreq "publicerror"
 
 local function serveFile(env, ctx, path, contentType)
    local file, err = ctx.io:open(path, "rb")
@@ -29,7 +30,6 @@ local function api(env, ctx, mailer)
       return true
    end
    local data = ctx.admin:postData(env)
-   local testedRecipient
    local ok, err = pcall(function()
       if data.action ~= "save-settings" and data.action ~= "save-and-test" then
          error("Unknown mailer action", 2)
@@ -52,17 +52,28 @@ local function api(env, ctx, mailer)
          password = data.password ~= "" and data.password or nil,
          clearPassword = data.clear_password == "1"
       }
-      if data.action == "save-and-test" then
-         testedRecipient = mailer.sendTest(data.test_recipient)
-      end
    end)
    if not ok then
       env.response:setstatus(400)
-      env.response:json({ ok = false, error = tostring(err) })
+      env.response:json({ ok = false, error = "Settings were not saved: " .. publicError(err) })
       return true
    end
    local result = responseState(mailer)
-   if testedRecipient then result.testRecipient = testedRecipient end
+   result.saved = true
+   if data.action == "save-and-test" then
+      local tested, recipientOrError = pcall(mailer.sendTest, data.test_recipient)
+      if tested then
+         result.testRecipient = recipientOrError
+      else
+         local message = publicError(recipientOrError)
+         if message == "cannotconnect" then
+            message = "Could not connect to the SMTP server. Check the server, port and security setting."
+         end
+         env.response:setstatus(400)
+         result.ok = false
+         result.error = "Settings saved. Test email failed: " .. message
+      end
+   end
    env.response:json(result)
    return true
 end

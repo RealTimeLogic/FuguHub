@@ -82,6 +82,18 @@ blank.</p>
 <li>Selected pages and posts can be transferred between CMS servers using one-time ZIP snapshots. Transfers include content metadata and taxonomy assignments.</li>
 </ul>
 
+<h2 id="mailer-help">Large File Mailer</h2>
+<p>When installed, the mailer sends email, attachments, and expiring download links for files available through File Services.</p>
+<ol>
+<li>Open <a href="../plugins/large-file-mailer/">Mailer Settings</a>, configure SMTP and the <strong>From address</strong>, set the <strong>Public base URL</strong> for download links, and enable sending. The sender also needs access to the files through <a href="../plugins/file-services/">File Services</a>.</li>
+<li>Add recipients in <a href="../../mailer/contacts/">Contacts</a>. Use <a href="../../mailer/invitations/">Password Invitations</a> to let them create personal download passwords before sending a protected delivery. Every selected recipient must have confirmed their password; this is separate from a CMS login password.</li>
+<li>Open <a href="../../mailer/compose/">Compose</a>, or select files in File Services and choose <strong>Email selected files</strong>. Both start with <strong>Secure download links</strong> and <strong>Require each recipient's confirmed password</strong> enabled. Clearing the password option allows anyone holding a valid link to download the file.</li>
+<li>Choose recipients or lists, enter the subject and message, and select <strong>Queue Delivery</strong>. Download links are appended automatically. Check <a href="../../mailer/jobs/">Jobs</a> for progress and delivery errors; queuing does not mean the email has already been sent.</li>
+</ol>
+<p>Under <strong>Jobs &gt; View &gt; Downloads</strong>, each recipient/file has a successful download count and last-downloaded time. Counts start with the download-tracking update and exclude older unverified events. Only complete server transfers count; opening the password form or a failed download does not.</p>
+<h3>Forgotten Passwords</h3>
+<p><strong>Forgot your password?</strong> on a protected download page queues a help email to the configured From address and invalidates all unexpired download links for that recipient. It leaves the password unchanged. Monitor that mailbox and Jobs for failed notifications. Anyone with a valid link can request help, so verify the recipient independently before resetting their password and sending new links.</p>
+
 <h2>Operational Notes</h2>
 <ul>
 <li>Do not expose admin pages on an untrusted network until at least one admin user exists.</li>

@@ -13,8 +13,7 @@ local csrf = appreq "csrf"
 local validation = appreq "validation"
 local redirectservice = appreq "redirectservice"
 
-local M = {}
-local ADMIN_CSS_VERSION = "20260727-3"
+local M = { cssVersion = "20261114" }
 
 local nav = {
    { id = "dashboard", label = "Dashboard", href = "/admin/" },
@@ -36,10 +35,6 @@ local trim = validation.trim
 
 local function now()
    return os.time()
-end
-
-local function selected(current, value)
-   return tostring(current or "") == value and " selected" or ""
 end
 
 local function appUrl(app, path)
@@ -73,61 +68,11 @@ end
 local function layout(_ENV, app, title, active, body)
    response:setcontenttype("text/html; charset=utf-8")
    response:setheader("x-content-type-options", "nosniff")
-   response:write("<!doctype html><html><head><meta charset='utf-8'>")
-   response:write("<meta name='viewport' content='width=device-width, initial-scale=1'>")
-   response:write("<title>", esc(title), " - CMS Admin</title>")
-   response:write("<link rel='stylesheet' href='", appUrl(app, "/admin/admin.css?v=" .. ADMIN_CSS_VERSION), "'>")
-   response:write("<script defer src='", appUrl(app, "/admin/admin.js"), "'></script>")
-   response:write("</head><body><div class='admin-shell'><aside class='sidebar'>")
-   response:write("<h1 class='brand'>CMS Admin</h1><nav class='nav'>")
-   local authInfo = adminauth.info(app)
-   local identityAccessInstalled = app.identityAccessUi ~= nil
-   local externalIdentityAccess = authInfo.borrowed and authInfo.managementUrl
-   for _, item in ipairs(nav) do
-      if item.id ~= "users" or
-         (not identityAccessInstalled and not externalIdentityAccess) then
-         response:write("<a href='", appUrl(app, item.href), "'")
-         if item.id == active then response:write(" class='active'") end
-         response:write(">", esc(item.label), "</a>")
-      end
-   end
-   if externalIdentityAccess then
-      response:write("<a href='", esc(appUrl(app, externalIdentityAccess)),
-         "'>Users &amp; Access</a>")
-   end
-   local pluginAdmin = app.pluginAdmin
-   if pluginAdmin then
-      for _, item in ipairs(pluginAdmin.nav) do
-         response:write("<a href='", appUrl(app, item.href), "'")
-         if item.active == active then response:write(" class='active'") end
-         response:write(">", esc(item.label), "</a>")
-      end
-   end
-   response:write("</nav></aside><main class='content'>")
-   response:write("<div class='topbar'><h1>", esc(title), "</h1><a href='", appUrl(app, "/"), "' class='button secondary'>View Site</a></div>")
-   if not adminauth.available(app) then
-      response:write("<div class='notice'>Admin authentication is unavailable: ",
-         esc(adminauth.reason(app) or "Identity service error"), ".</div>")
-    elseif not adminauth.enabled(app) then
-      local setupUrl = "/admin/users/"
-      local setupLabel = "Add an admin user"
-      if identityAccessInstalled then
-         setupUrl = app.identityAccessUi.managementUrl or
-            "/admin/plugins/identity-access/"
-         setupLabel = "Configure a CMS administrator"
-      elseif authInfo.managementUrl then
-         setupUrl = authInfo.managementUrl
-         setupLabel = "Configure a CMS administrator"
-      end
-      response:write("<div class='notice'>Admin authentication is disabled. <a href='",
-         esc(appUrl(app, setupUrl)), "'>", setupLabel, "</a> to enable it.</div>")
-   end
-   for _, failure in ipairs(pluginFailures(app)) do
-      response:write("<div class='notice'><strong>Plugin ", esc(failure.id),
-         " is unavailable.</strong> ", esc(failure.message), ".</div>")
-   end
+   adminTitle, adminActive = title, active
+   adminPluginFailures = pluginFailures(app)
+   response:include(app.url("/admin/includes/start.lsp"), true)
    body()
-   response:write("</main></div></body></html>")
+   response:include(app.url("/admin/includes/end.lsp"), true)
    return true
 end
 
@@ -369,7 +314,7 @@ local function inferParentId(app, conn, menuId, url, currentId)
    return found
 end
 
-function M.contentRows(app, filterType)
+function M.contentRows(app, filterType, query, pageNumber)
    filterType = trim(filterType)
    local where = ""
    if filterType == "page" or filterType == "post" then
@@ -377,13 +322,22 @@ function M.contentRows(app, filterType)
    else
       filterType = ""
    end
+   query = trim(query):sub(1, 200)
+   if query ~= "" then
+      where = where .. (where == "" and " WHERE " or " AND ") ..
+         "(instr(lower(title),lower(" .. quote(query) .. "))>0 OR " ..
+         "instr(lower(path),lower(" .. quote(query) .. "))>0)"
+   end
+   local total = tonumber(db.readOne(app, "SELECT COUNT(*) AS count FROM content" .. where).count)
+   local pages = math.max(1, math.ceil(total / 50))
+   pageNumber = math.max(1, math.min(pages, math.floor(tonumber(pageNumber) or 1)))
    local rows = db.readRows(app,
       "SELECT id,type,path,title,render_mode,status,updated_at,cache_policy FROM content" ..
-      where .. " ORDER BY type,path LIMIT 500")
+      where .. " ORDER BY type,path LIMIT 50 OFFSET " .. ((pageNumber - 1) * 50))
    for _, row in ipairs(rows) do
       row.public_path = assert(contentpath.publicPath(app, row.type, row.path))
    end
-   return rows, filterType
+   return rows, filterType, { page = pageNumber, pages = pages, total = total, query = query }
 end
 
 function M.contentRow(app, id)
@@ -449,26 +403,30 @@ function M.menuTreeItems(app)
 
    local ordered = {}
    local visited = {}
-   local function append(row, depth)
+   local function append(row, depth, path, valid)
       local id = tonumber(row.id)
       if visited[id] then return end
       visited[id] = true
       row.tree_depth = depth
+      row.tree_path = (path and path .. " / " or "") .. row.label
+      row.tree_valid_parent = valid
+      row.tree_start = #ordered + 1
       ordered[#ordered + 1] = row
       for _, child in ipairs(children[id] or {}) do
-         append(child, depth + 1)
+         append(child, depth + 1, row.tree_path, valid)
       end
+      row.tree_end = #ordered
    end
 
    for _, row in ipairs(roots) do
-      append(row, 0)
+      append(row, 0, nil, not tonumber(row.parent_id))
    end
    table.sort(items, menuItemOrder)
    for _, row in ipairs(items) do
       local id = tonumber(row.id)
       if not visited[id] then
          row.tree_parent_label = nil
-         append(row, 0)
+         append(row, 0, nil, false)
       end
    end
    return ordered
@@ -487,25 +445,16 @@ WHERE mi.id=]] .. id)
 end
 
 local function dashboard(_ENV, app)
-   local stats = {
-      content = db.readOne(app, "SELECT COUNT(*) count FROM content"),
-      pages = db.readOne(app, "SELECT COUNT(*) count FROM content WHERE type='page'"),
-      posts = db.readOne(app, "SELECT COUNT(*) count FROM content WHERE type='post'"),
-      lsp = db.readOne(app, "SELECT COUNT(*) count FROM content WHERE render_mode='lsp'"),
-      redirects = db.readOne(app, "SELECT COUNT(*) count FROM redirects"),
-      menuItems = db.readOne(app, "SELECT COUNT(*) count FROM menu_items"),
-   }
+   _ENV.adminDashboard = db.readOne(app, [[SELECT COUNT(*) content,
+      COUNT(CASE WHEN type='page' THEN 1 END) pages,
+      COUNT(CASE WHEN type='post' THEN 1 END) posts,
+      COUNT(CASE WHEN render_mode='lsp' THEN 1 END) lsp,
+      (SELECT COUNT(*) FROM redirects) redirects,
+      (SELECT COUNT(*) FROM menu_items) menuItems FROM content]])
    local activeTheme = db.readOne(app, "SELECT value FROM options WHERE key='active_theme'")
+   _ENV.adminDashboard.theme = activeTheme and activeTheme.value or app.defaultTheme or "default"
    return layout(_ENV, app, "Dashboard", "dashboard", function()
-      response:write("<section class='grid'>")
-      response:write("<div class='stat'><span class='value'>", esc(stats.content.count), "</span><span class='label'>Content</span></div>")
-      response:write("<div class='stat'><span class='value'>", esc(stats.pages.count), "</span><span class='label'>Pages</span></div>")
-      response:write("<div class='stat'><span class='value'>", esc(stats.posts.count), "</span><span class='label'>Posts</span></div>")
-      response:write("<div class='stat'><span class='value'>", esc(stats.lsp.count), "</span><span class='label'>LSP Content</span></div>")
-      response:write("<div class='stat'><span class='value'>", esc(stats.redirects.count), "</span><span class='label'>Redirects</span></div>")
-      response:write("<div class='stat'><span class='value'>", esc(stats.menuItems.count), "</span><span class='label'>Menu Items</span></div>")
-      response:write("<div class='stat'><span class='text-value'>", esc(activeTheme and activeTheme.value or app.defaultTheme or "default"), "</span><span class='label'>Theme</span></div>")
-      response:write("</section>")
+      response:include(app.url("/admin/dashboard/page.lsp"), true)
    end)
 end
 
@@ -531,64 +480,12 @@ local function contentForm(_ENV, app, row)
          assignedCategories[tonumber(category.id)] = true
       end
    end
+   _ENV.adminContentEditor = {
+      row = row, isNew = isNew, categories = categories,
+      assignedCategories = assignedCategories
+   }
    return layout(_ENV, app, isNew and "New Content" or "Edit Content", "content", function()
-      response:write("<section class='panel'><div class='panel-body'>")
-      response:write("<form method='post' enctype='multipart/form-data' action='", appUrl(app, isNew and "/admin/content/new" or "/admin/content/edit"), "'")
-      if not isNew then
-         response:write(" hx-post='", appUrl(app, "/admin/content/save.lsp"),
-            "' hx-encoding='multipart/form-data' hx-target='#content-save-status' hx-swap='innerHTML'")
-      end
-      response:write(">")
-      csrf.field(_ENV)
-      if not isNew then response:write("<input type='hidden' name='id' value='", esc(row.id), "'>") end
-      response:write("<div class='form-grid'>")
-      response:write("<div class='field'><label>Type</label><select name='type'>")
-      response:write("<option value='page'", selected(row.type, "page"), ">Page</option>")
-      response:write("<option value='post'", selected(row.type, "post"), ">Post</option></select></div>")
-      response:write("<div class='field'><label>Status</label><select name='status'>")
-      response:write("<option value='published'", selected(row.status, "published"), ">Published</option>")
-      response:write("<option value='draft'", selected(row.status, "draft"), ">Draft</option></select></div>")
-      response:write("<div class='field full'><label>Title</label><input name='title' value='", esc(row.title), "' required></div>")
-      response:write("<div class='field'><label>Path</label><input name='path' value='", esc(row.path), "' required><span class='muted'>For posts, enter only the article path. The configured Blog Base URL is added automatically.</span></div>")
-      response:write("<div class='field'><label>Render Mode</label><select name='render_mode'>")
-      response:write("<option value='html'", selected(row.render_mode, "html"), ">HTML</option>")
-      response:write("<option value='lsp'", selected(row.render_mode, "lsp"), ">LSP</option></select></div>")
-      response:write("<div class='field'><label>Browser Cache</label><select name='cache_policy'>")
-      response:write("<option value='default'", selected(row.cache_policy, "default"), ">Default</option>")
-      response:write("<option value='revalidate'", selected(row.cache_policy, "revalidate"), ">Revalidate</option>")
-      response:write("<option value='no-cache'", selected(row.cache_policy, "no-cache"), ">No cache</option>")
-      response:write("<option value='no-store'", selected(row.cache_policy, "no-store"), ">No store</option></select></div>")
-      response:write("<div class='field full'><label>Meta Description</label><textarea class='short' name='meta_description'>", esc(row.meta_description), "</textarea></div>")
-      response:write("<div class='field full'><label>Extra Head HTML</label><textarea class='short' name='head_html'>", esc(row.head_html), "</textarea></div>")
-      response:write("<fieldset class='field full'><legend>Categories</legend>")
-      if #categories == 0 then
-         response:write("<p class='muted'>No categories exist. <a href='",
-            appUrl(app, "/admin/categories/"), "'>Create a category</a>.</p>")
-      else
-         response:write("<div class='category-options'>")
-         for _, category in ipairs(categories) do
-             response:write("<label class='choice-row'><input type='checkbox' name='category_",
-                esc(category.id), "' value='1'",
-                assignedCategories[tonumber(category.id)] and " checked" or "",
-                "><strong>", esc(category.name), "</strong></label>")
-          end
-         response:write("</div><p class='muted'>Category assignments apply to posts.</p>")
-      end
-      response:write("</fieldset>")
-      response:write("<div class='field full'><label>Body</label><textarea name='body_html'>", esc(row.body_html), "</textarea></div>")
-      response:write("</div><div class='actions'><button type='submit'>Save</button>")
-      if not isNew and row.status ~= "published" then response:write("<a class='button secondary' href='", appUrl(app, "/admin/content/preview?id=" .. tostring(row.id)), "'>Preview</a>") end
-      response:write("<a class='button secondary' href='", appUrl(app, "/admin/content/"), "'>Cancel</a></div>")
-      if not isNew then
-         response:write("<div id='content-save-status' class='fragment-status' aria-live='polite'></div>")
-      end
-      response:write("</form></div></section>")
-      if not isNew then
-         response:write("<section class='panel danger-zone'><div class='panel-body'><h2>Delete Content</h2>")
-         response:write("<p class='muted'>Permanently delete this ", esc(row.type), " after reviewing its dependencies.</p>")
-         response:write("<a class='button danger' href='", appUrl(app, "/admin/content/delete?id=" .. tostring(row.id)), "'>Delete Permanently</a>")
-         response:write("</div></section>")
-      end
+      response:include(app.url("/admin/content/editor.lsp"), true)
    end)
 end
 
@@ -752,19 +649,9 @@ local function categoryDelete(_ENV, app)
       return redirect(_ENV, app, "/admin/categories/")
    end
 
+   _ENV.adminCategoryDelete = row
    return layout(_ENV, app, "Delete Category", "categories", function()
-      response:write("<section class='panel danger-zone'><div class='panel-body'>")
-      response:write("<h2>Delete Category</h2><p>Delete <strong>", esc(row.name),
-         "</strong>? Its ", esc(row.assignmentCount),
-         " content assignments will be removed. Posts are not deleted.</p>")
-      response:write("<form method='post'>")
-      csrf.field(_ENV)
-      response:write("<input type='hidden' name='id' value='", esc(id), "'>")
-      response:write("<input type='hidden' name='confirmed' value='true'>")
-      response:write("<div class='actions'><button class='danger' type='submit'>Delete Category</button>")
-      response:write("<a class='button secondary' href='",
-         appUrl(app, "/admin/categories/"), "'>Cancel</a></div></form>")
-      response:write("</div></section>")
+      response:include(app.url("/admin/categories/delete.lsp"), true)
    end)
 end
 
@@ -812,54 +699,9 @@ local function contentDelete(_ENV, app)
       return redirect(_ENV, app, "/admin/content/")
    end
 
+   _ENV.adminContentDelete = dependencies
    return layout(_ENV, app, "Delete Content", "content", function()
-      response:write("<section class='panel danger-zone'><div class='panel-body'>")
-      response:write("<h2>Delete Permanently</h2><p>This will permanently delete <strong>",
-         esc(dependencies.content.title), "</strong> at <code>", esc(dependencies.content.path),
-         "</code>. This CMS does not have a trash or restore feature.</p>")
-      if dependencies.activeNotFoundPage then
-         response:write("<div class='notice error'>The active editable 404 page cannot be deleted. Configure another 404 page or disable the editable 404 handler first.</div>")
-         response:write("<a class='button secondary' href='",
-            appUrl(app, "/admin/content/edit?id=" .. tostring(id)), "'>Back to Content</a>")
-         response:write("</div></section>")
-         return
-      end
-      response:write("<form method='post'>")
-      csrf.field(_ENV)
-      response:write("<input type='hidden' name='id' value='", esc(id), "'>")
-      response:write("<input type='hidden' name='confirmed' value='true'>")
-
-      if #dependencies.menuItems > 0 then
-         response:write("<fieldset><legend>Linked Menu Items</legend><p class='muted'>Choose what happens to these menu entries:</p><ul class='dependency-list'>")
-         for _, item in ipairs(dependencies.menuItems) do
-            response:write("<li><strong>", esc(item.label), "</strong> in ", esc(item.menu_slug),
-               " (<code>", esc(item.url), "</code>)</li>")
-         end
-         response:write("</ul><label class='choice-row'><input type='radio' name='menu_items_action' value='preserve' checked> Preserve the menu items and their URLs</label>")
-         response:write("<label class='choice-row'><input type='radio' name='menu_items_action' value='delete'> Delete the linked menu items</label></fieldset>")
-      end
-
-      if #dependencies.redirects > 0 then
-         response:write("<fieldset><legend>Related Redirects</legend><p class='muted'>Choose what happens to redirects that use this content path:</p><ul class='dependency-list'>")
-         for _, item in ipairs(dependencies.redirects) do
-            response:write("<li><code>", esc(item.from_path), "</code> to <code>",
-               esc(item.to_path), "</code></li>")
-         end
-         response:write("</ul><label class='choice-row'><input type='radio' name='redirects_action' value='preserve' checked> Preserve the redirects</label>")
-         response:write("<label class='choice-row'><input type='radio' name='redirects_action' value='delete'> Delete the related redirects</label></fieldset>")
-      end
-
-      if #dependencies.childContent > 0 then
-         response:write("<div class='notice'><strong>Child paths will not be deleted.</strong><ul class='dependency-list'>")
-         for _, item in ipairs(dependencies.childContent) do
-            response:write("<li>", esc(item.title), " (<code>", esc(item.path), "</code>)</li>")
-         end
-         response:write("</ul></div>")
-      end
-      response:write("<div class='actions'><button class='danger' type='submit'>Delete Permanently</button>")
-      response:write("<a class='button secondary' href='",
-         appUrl(app, "/admin/content/edit?id=" .. tostring(id)), "'>Cancel</a></div>")
-      response:write("</form></div></section>")
+      response:include(app.url("/admin/content/delete.lsp"), true)
    end)
 end
 
@@ -926,39 +768,7 @@ function M.deleteMenuItem(app, data)
 end
 
 local function menuDelete(_ENV, app)
-   local data = postData(_ENV)
-   local id = tonumber(data.id)
-   if not id then return _ENV.response:senderror(400, "Missing menu item id") end
-   local info, infoErr = M.menuDeleteInfo(app, id)
-   if not info then return _ENV.response:senderror(404, infoErr) end
-   local item = info.item
-   local children = info.children
-
-   if _ENV.request:method() == "POST" then
-      M.deleteMenuItem(app, data)
-      return redirect(_ENV, app, "/admin/menus/")
-   end
-
-   return layout(_ENV, app, "Delete Menu Item", "menus", function()
-      response:write("<section class='panel danger-zone'><div class='panel-body'>")
-      response:write("<h2>Delete Menu Item</h2><p>Permanently delete <strong>", esc(item.label),
-         "</strong> from ", esc(item.menu_name), "?</p><p class='muted'>The content at <code>",
-         esc(item.url), "</code> will not be deleted.</p>")
-      if #children > 0 then
-         response:write("<div class='notice'><strong>Child items will become top-level menu items.</strong><ul class='dependency-list'>")
-         for _, child in ipairs(children) do
-            response:write("<li>", esc(child.label), " (<code>", esc(child.url), "</code>)</li>")
-         end
-         response:write("</ul></div>")
-      end
-      response:write("<form method='post'>")
-      csrf.field(_ENV)
-      response:write("<input type='hidden' name='id' value='", esc(id), "'>")
-      response:write("<input type='hidden' name='confirmed' value='true'>")
-      response:write("<div class='actions'><button class='danger' type='submit'>Delete Menu Item</button>")
-      response:write("<a class='button secondary' href='", appUrl(app, "/admin/menus/"), "'>Cancel</a></div>")
-      response:write("</form></div></section>")
-   end)
+   return _ENV.response:include(app.url("/admin/menus/delete.lsp"), true)
 end
 
 function M.mutateMenu(app, data)
@@ -1041,38 +851,16 @@ local function redirectsPage(_ENV, app)
       clearRuntimePageTables(app)
       return redirect(_ENV, app, "/admin/redirects/")
    end
-   local redirects = db.readRows(app, "SELECT * FROM redirects ORDER BY from_path")
+   _ENV.adminRedirects = db.readRows(app, "SELECT * FROM redirects ORDER BY from_path")
    return layout(_ENV, app, "Redirects", "redirects", function()
-      response:write("<section class='panel'><div class='panel-body'><h2>Add Redirect</h2>")
-      response:write("<form method='post'><input type='hidden' name='action' value='add'><div class='form-grid'>")
-      csrf.field(_ENV)
-      response:write("<div class='field'><label>From</label><input name='from_path' required></div>")
-      response:write("<div class='field'><label>To</label><input name='to_path' required></div>")
-      response:write("<div class='field'><label>Status</label><input name='status_code' value='302'></div>")
-      response:write("</div><div class='actions'><button type='submit'>Add</button></div></form></div></section>")
-      response:write("<section class='panel'><table><thead><tr><th>ID</th><th>From</th><th>To</th><th>Status</th><th></th></tr></thead><tbody>")
-      for _, row in ipairs(redirects) do
-         response:write("<tr><td>", esc(row.id), "</td><td>", esc(row.from_path), "</td><td>", esc(row.to_path), "</td><td>", esc(row.status_code), "</td>")
-         response:write("<td><form class='inline' method='post'><input type='hidden' name='action' value='delete'><input type='hidden' name='id' value='", esc(row.id), "'>")
-         csrf.field(_ENV)
-         response:write("<button class='danger' type='submit'>Delete</button></form></td></tr>")
-      end
-      response:write("</tbody></table></section>")
+      response:include(app.url("/admin/redirects/page.lsp"), true)
    end)
-end
-
-local function listThemes(app)
-   return theme.list(app)
-end
-
-local function normalizeThemeName(name)
-   return theme.normalizeName(name)
 end
 
 local function themesPage(_ENV, app)
    local data = postData(_ENV)
    if _ENV.request:method() == "POST" then
-      local themeName, themeErr = normalizeThemeName(data.theme)
+      local themeName, themeErr = theme.normalizeName(data.theme)
       if not themeName then
          _ENV.response:senderror(400, themeErr)
          return true
@@ -1086,78 +874,51 @@ local function themesPage(_ENV, app)
       return redirect(_ENV, app, "/admin/themes/")
    end
    local active = db.readOne(app, "SELECT value FROM options WHERE key='active_theme'")
-   active = normalizeThemeName(active and active.value or app.defaultTheme or "default") or app.defaultTheme or "default"
-   local themes = listThemes(app)
+   active = theme.normalizeName(active and active.value or app.defaultTheme or "default") or app.defaultTheme or "default"
+   _ENV.adminThemes = { active = active, items = theme.list(app) }
    return layout(_ENV, app, "Themes", "themes", function()
-      response:write("<section class='panel'><div class='panel-body'><h2>Active Theme</h2>")
-      response:write("<form method='post'>")
-      csrf.field(_ENV)
-      response:write("<div class='form-grid'><div class='field'><label>Theme</label><select name='theme'>")
-      for _, theme in ipairs(themes) do
-         local label = theme.name
-         if theme.source == "zip" then
-            label = label .. " (zip)"
-         elseif theme.source == "built-in" then
-            label = label .. " (built-in fallback)"
-         end
-         response:write("<option value='", esc(theme.name), "'", selected(active, theme.name), ">", esc(label), "</option>")
-      end
-      response:write("</select></div></div><div class='actions'><button type='submit'>Save</button></div></form>")
-      response:write("<p class='muted'>Current runtime theme: ", esc(app.theme and app.theme.name or active))
-      if app.theme and app.theme.source then
-         response:write(" from ", esc(app.theme.source))
-      end
-      response:write("</p>")
-      response:write("</div></section>")
+      response:include(app.url("/admin/themes/form.lsp"), true)
    end)
 end
 
 local function settingsPage(_ENV, app)
    local data = postData(_ENV)
+   local values, message = app.settings or settings.load(app)
    if _ENV.request:method() == "POST" then
-      local blogPath, blogErr = validation.path(data.blog_base_path, "/blog/")
-      if not blogPath then return _ENV.response:senderror(400, blogErr) end
-      local notFoundPath, notFoundErr = validation.path(data.not_found_path, "/404/")
-      if not notFoundPath then return _ENV.response:senderror(400, notFoundErr) end
-      local updated, updateErr = settings.updateWithRuntime(app, {
+      values = {
          htmxEnabled = data.htmx_enabled == "1" or data.htmx_enabled == "on",
          smqEnabled = data.smq_enabled == "1" or data.smq_enabled == "on",
-         blogBasePath = blogPath,
+         blogBasePath = data.blog_base_path,
          notFoundEnabled = data.not_found_enabled == "1" or data.not_found_enabled == "on",
-         notFoundPath = notFoundPath
-      }, function()
-         notfound.configure(app)
-         local smqOk, smqErr = smqservice.configure(app)
-         if not smqOk then error(smqErr, 2) end
-      end)
-      if not updated then
-         return _ENV.response:senderror(500,
-            "Updating CMS settings failed: " .. tostring(updateErr))
+         notFoundPath = data.not_found_path
+      }
+      local blogPath, blogErr = validation.path(data.blog_base_path, "/blog/")
+      local notFoundPath, notFoundErr = validation.path(data.not_found_path, "/404/")
+      if not blogPath or not notFoundPath then
+         message = blogErr or notFoundErr
+         response:setstatus(400)
+      else
+         values.blogBasePath, values.notFoundPath = blogPath, notFoundPath
+         local updated, updateErr = settings.updateWithRuntime(app, values, function()
+            notfound.configure(app)
+            local smqOk, smqErr = smqservice.configure(app)
+            if not smqOk then error(smqErr, 2) end
+         end)
+         if not updated then
+            mako.log("Updating CMS settings failed: " .. tostring(updateErr), "cms-admin")
+            values.blogBasePath, values.notFoundPath = data.blog_base_path, data.not_found_path
+            message = "Settings could not be applied. Check the server log before retrying."
+            response:setstatus(500)
+         else
+            clearRuntimePageTables(app)
+            return redirect(_ENV, app, "/admin/settings/?saved=1")
+         end
       end
-      clearRuntimePageTables(app)
-      return redirect(_ENV, app, "/admin/settings/")
    end
 
-   local htmxEnabled = settings.isHtmxEnabled(app)
-   local smqEnabled = settings.isSmqEnabled(app)
-   local blogBasePath = settings.blogBasePath(app)
-   local notFoundEnabled = settings.isNotFoundEnabled(app)
-   local notFoundPath = settings.notFoundPath(app)
+   _ENV.adminSettings = { values = values, message = message, saved = data.saved == "1" }
    return layout(_ENV, app, "Settings", "settings", function()
-      response:write("<section class='panel'><div class='panel-body'><h2>Public Site</h2>")
-      response:write("<form method='post'>")
-      csrf.field(_ENV)
-      response:write("<div class='form-grid'><div class='field'><label>Blog Base URL</label><input name='blog_base_path' value='", esc(blogBasePath), "' placeholder='/blog/' required><span class='muted'>The CMS combines this base with each stored post path. Changing it updates public post URLs without rewriting post rows.</span></div></div>")
-      response:write("<label class='check-row'><input id='setting-htmx' type='checkbox' name='htmx_enabled' value='1'", htmxEnabled and " checked" or "", ">")
-      response:write("<span><strong>Enable HTMX navigation</strong><span class='muted'>Serve CMS page fragments for HTMX requests and keep the public page shell loaded during navigation.</span></span></label>")
-      response:write("<label class='check-row'><input id='setting-smq' type='checkbox' name='smq_enabled' value='1'", smqEnabled and " checked" or "", htmxEnabled and "" or " disabled", ">")
-      response:write("<span><strong>Enable SMQ real-time messaging</strong><span class='muted'>Keep one SMQ connection in the HTMX page shell and provide page-scoped messaging and RPC. Requires HTMX.</span></span></label>")
-      response:write("<div class='form-grid' style='margin-top:16px'><div class='field'><label>404 Page URL</label><input name='not_found_path' value='", esc(notFoundPath), "' placeholder='/404/' required></div></div>")
-      response:write("<label class='check-row'><input type='checkbox' name='not_found_enabled' value='1'", notFoundEnabled and " checked" or "", ">")
-      response:write("<span><strong>Enable editable 404 page</strong><span class='muted'>Install a low-priority fallback directory that forwards unmatched public URLs to this CMS page with HTTP status 404.</span></span></label>")
-      response:write("<div class='actions'><button type='submit'>Save Settings</button></div>")
-      response:write("</form></div></section><script defer src='",
-         appUrl(app, "/admin/settings.js"), "'></script>")
+      response:include(app.url("/admin/settings/form.lsp"), true)
    end)
 end
 
@@ -1182,7 +943,12 @@ local function usersPage(_ENV, app)
    if _ENV.request:method() == "POST" then
       local action = trim(data.action)
       if action == "save" then
-         local ok, err = adminauth.setUser(app, data.username, data.password)
+         local ok, err
+         if not data.password or data.password == "" then
+            err = "Password is required"
+         else
+            ok, err = adminauth.setUser(app, data.username, data.password)
+         end
          if ok then
             return redirect(_ENV, app, "/admin/users/")
          end
@@ -1200,46 +966,12 @@ local function usersPage(_ENV, app)
       end
    end
 
-   local users = adminauth.users(app)
+   _ENV.adminUsers = {
+      users = adminauth.users(app), available = adminauth.available(app), message = message,
+      username = message and data.action == "save" and data.username or ""
+   }
    return layout(_ENV, app, "Users", "users", function()
-      if message then
-         response:write("<div class='notice'>", esc(message), "</div>")
-      end
-      response:write("<section class='panel'><div class='panel-body'><h2>Admin Users</h2>")
-      if not adminauth.available(app) then
-         response:write("<p class='muted'>TPM-backed authentication is not available in this runtime.</p>")
-      else
-         response:write("<p class='muted'>Create an administrator to protect the admin directory. Users and credentials are stored together in the CMS SQLite database.</p>")
-         response:write("<form method='post'><input type='hidden' name='action' value='save'>")
-         csrf.field(_ENV)
-         response:write("<div class='form-grid'>")
-         response:write("<div class='field'><label>Username</label><input name='username' autocomplete='username' required></div>")
-         response:write("<div class='field'><label>Password</label><input name='password' type='password' autocomplete='new-password' required></div>")
-         response:write("</div><div class='actions'><button type='submit'>Save User</button></div></form>")
-      end
-      response:write("</div></section>")
-
-      response:write("<section class='panel'><table><thead><tr><th>Username</th><th>Status</th><th></th></tr></thead><tbody>")
-      if #users == 0 then
-         response:write("<tr><td colspan='3'><span class='muted'>No admin users configured.</span></td></tr>")
-      else
-         for _, user in ipairs(users) do
-            response:write("<tr><td>", esc(user), "</td><td><span class='tag'>active</span></td><td>")
-            response:write("<form class='inline-form' method='post'><input type='hidden' name='action' value='remove'>")
-            csrf.field(_ENV)
-            response:write("<input type='hidden' name='username' value='", esc(user), "'>")
-            response:write("<button class='danger' type='submit'>Remove Admin Access</button></form>")
-            response:write("</td></tr>")
-         end
-      end
-      response:write("</tbody></table></section>")
-      if #users > 0 then
-         response:write("<section class='panel'><div class='panel-body'><h2>Reset Authentication</h2>")
-         response:write("<p class='muted'>Explicitly remove all users and return the CMS to unprotected bootstrap mode.</p>")
-         response:write("<form method='post' onsubmit=\"return confirm('Remove every user and disable authentication?')\">")
-         csrf.field(_ENV)
-         response:write("<input type='hidden' name='action' value='reset'><button class='danger' type='submit'>Reset All Users</button></form></div></section>")
-      end
+      response:include(app.url("/admin/users/page.lsp"), true)
    end)
 end
 
@@ -1256,25 +988,9 @@ local function mcpPage(_ENV, app)
       message = err
    end
 
-   local enabled = mcpconfig.enabled(app)
+   _ENV.adminMcp = { enabled = mcpconfig.enabled(app), message = message }
    return layout(_ENV, app, "MCP", "mcp", function()
-      if message then response:write("<div class='notice'>", esc(message), "</div>") end
-      response:write("<section class='panel'><div class='panel-body'><h2>MCP HTTP Server</h2>")
-      response:write("<p class='muted'>The MCP endpoint is <code>", esc(appUrl(app, "/mcp/")),
-         "</code>. Use this exact URL in MCP Inspector. It remains disabled until a bearer token is saved. The token is encrypted in SQLite with a TPM-derived key and is never displayed again.</p>")
-      response:write("<p>Status: <span class='tag", enabled and "" or " hidden", "'>",
-         enabled and "enabled" or "disabled", "</span></p>")
-      if app.mcpTokenError then
-         response:write("<div class='notice'>Stored token error: ", esc(app.mcpTokenError), "</div>")
-      end
-      response:write("<form method='post'>")
-      csrf.field(_ENV)
-      response:write("<div class='field'><label>Bearer Token</label><input type='password' name='token' minlength='16' autocomplete='new-password' required></div>")
-      response:write("<div class='actions'><button type='submit' name='action' value='save'>Save Token</button>")
-      if enabled then
-         response:write("<button class='danger' type='submit' name='action' value='disable' formnovalidate>Disable MCP</button>")
-      end
-      response:write("</div></form></div></section>")
+      response:include(app.url("/admin/mcp/form.lsp"), true)
    end)
 end
 
@@ -1304,6 +1020,8 @@ function M.handle(_ENV, app, relpath)
    local uri = _ENV.request:uri():gsub("%?.*$", "")
    local appPath = app.pathFromUri and app.pathFromUri(uri) or uri
    local path = tostring(relpath or ""):gsub("%?.*$", ""):gsub("^/+", "")
+   -- The authenticator includes its hidden login page before a session exists.
+   if path == ".login.lsp" then return false end
    if appPath == "/admin" then
       return redirect(_ENV, app, "/admin/")
    end
@@ -1311,6 +1029,12 @@ function M.handle(_ENV, app, relpath)
       path:match("^content/.+%.lsp$") or
       path:match("^categories/.+%.lsp$") or
       path:match("^menus/.+%.lsp$") or
+      path:match("^settings/.+%.lsp$") or
+      path:match("^redirects/.+%.lsp$") or
+      path:match("^themes/.+%.lsp$") or
+      path:match("^dashboard/.+%.lsp$") or
+      path:match("^users/.+%.lsp$") or
+      path:match("^mcp/.+%.lsp$") or
       path:match("^includes/.+%.lsp$") then
       return false
    end

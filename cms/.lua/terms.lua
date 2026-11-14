@@ -21,15 +21,23 @@ local function decorateCategory(app, row)
    return row
 end
 
+local categorySelect = [[SELECT t.*,
+   COUNT(ct.content_id) assignment_count,
+   COALESCE(SUM(CASE WHEN c.type='post' AND c.status='published' THEN 1 ELSE 0 END),0)
+      published_post_count
+   FROM terms t
+   LEFT JOIN content_terms ct ON ct.term_id=t.id
+   LEFT JOIN content c ON c.id=ct.content_id
+   WHERE t.type='category']]
+
 local function categoryBySelector(conn, selector)
    local id = tonumber(selector)
    if id then
-      return db.one(conn, "SELECT * FROM terms WHERE type='category' AND id=" .. id)
+      return db.one(conn, categorySelect .. " AND t.id=" .. id .. " GROUP BY t.id")
    end
    local slug, err = validation.slug(selector, "Category slug")
    if not slug then return nil, err end
-   return db.one(conn, "SELECT * FROM terms WHERE type='category' AND slug=" ..
-      db.quote(slug))
+   return db.one(conn, categorySelect .. " AND t.slug=" .. db.quote(slug) .. " GROUP BY t.id")
 end
 
 function M.categoryPath(app, slug)
@@ -51,15 +59,7 @@ function M.categories(app, options)
    local limit = math.min(math.max(math.floor(tonumber(options.limit) or 100), 1), 500)
    local includeEmpty = options.includeEmpty ~= false
    return db.withRead(app, function(conn)
-      local rows = db.rows(conn, [[SELECT t.*,
-         COUNT(ct.content_id) assignment_count,
-         COALESCE(SUM(CASE WHEN c.type='post' AND c.status='published' THEN 1 ELSE 0 END),0)
-            published_post_count
-         FROM terms t
-         LEFT JOIN content_terms ct ON ct.term_id=t.id
-         LEFT JOIN content c ON c.id=ct.content_id
-         WHERE t.type='category'
-         GROUP BY t.id]] ..
+      local rows = db.rows(conn, categorySelect .. " GROUP BY t.id" ..
          (includeEmpty and "" or
             " HAVING SUM(CASE WHEN c.type='post' AND c.status='published' THEN 1 ELSE 0 END)>0") ..
          " ORDER BY t.name,t.id LIMIT " .. limit)

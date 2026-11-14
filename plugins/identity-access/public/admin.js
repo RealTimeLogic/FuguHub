@@ -9,6 +9,7 @@
 
    var csrf = tokenInput.value;
    var state = { users: [], roles: [] };
+   var busy = false;
 
    function normalizeState(payload) {
       payload.users = Array.isArray(payload.users) ? payload.users : [];
@@ -38,11 +39,7 @@
       return parent;
    }
 
-   function field(labelText, input) {
-      var wrapper = element("div", { className: "field" });
-      add(wrapper, element("label", { text: labelText }), input);
-      return wrapper;
-   }
+   var field = window.FuguHubAdmin.field;
 
    function button(text, className, action) {
       var node = element("button", {
@@ -50,8 +47,16 @@
          type: "button",
          className: className || ""
       });
-      node.addEventListener("click", action);
+      node.addEventListener("click", function () { if (!busy) action(); });
       return node;
+   }
+
+   function submitButton(form, text, action) {
+      form.addEventListener("submit", function (event) {
+         event.preventDefault();
+         if (!busy) action();
+      });
+      return element("button", { text: text, type: "submit" });
    }
 
    function setMessage(message, error) {
@@ -59,6 +64,13 @@
       if (!target) return;
       target.textContent = message || "";
       target.className = "identity-message" + (error ? " error" : "");
+      target.setAttribute("role", error ? "alert" : "status");
+      target.setAttribute("aria-label", target.textContent);
+      if (!busy) {
+         target.tabIndex = -1;
+         target.focus({ preventScroll: true });
+         target.scrollIntoView({ block: "nearest" });
+      }
    }
 
    function post(fields) {
@@ -67,13 +79,22 @@
       Object.keys(fields).forEach(function (key) {
          body.set(key, fields[key]);
       });
-      setMessage("Saving...", false);
+      busy = true;
+      var buttons = Array.from(root.querySelectorAll("button:not(:disabled)"));
+      buttons.forEach(function (node) { node.disabled = true; });
+      root.setAttribute("aria-busy", "true");
+      setMessage(fields.action === "reset-identity" ? "Resetting..." :
+         fields.action.indexOf("delete-") === 0 ? "Deleting..." : "Saving...", false);
       return fetch("api/", {
          method: "POST",
          headers: { "Content-Type": "application/x-www-form-urlencoded" },
          body: body.toString(),
          credentials: "same-origin"
-      }).then(readResponse);
+      }).then(readResponse).finally(function () {
+         busy = false;
+         buttons.forEach(function (node) { node.disabled = false; });
+         root.removeAttribute("aria-busy");
+      });
    }
 
    function readResponse(response) {
@@ -128,7 +149,7 @@
       var password = element("input", {
          name: "password",
          type: "password",
-         placeholder: user ? "Required for credential changes" : "Required"
+         placeholder: user && !user.disabled ? "Leave blank to keep password" : "Required when enabled"
       });
       var maxUsers = element("input", {
          name: "max_users",
@@ -143,13 +164,14 @@
          value: user ? user.inactive : 1200
       });
       inactive.min = "0";
+      inactive.max = "31536000";
 
       var grid = element("div", { className: "identity-form-grid" });
       add(grid,
          field("Username", username),
          field("Display name", displayName),
          field("Email", email),
-         field("New password", password),
+         field("New password", password, "Required for new or re-enabled users. Leave blank to keep an existing password. Unavailable while Disabled is checked."),
          field("Maximum sessions", maxUsers),
          field("Inactive timeout (seconds)", inactive)
       );
@@ -170,6 +192,12 @@
       add(disabledLabel, disabled, document.createTextNode("Disabled"));
       add(flags, recycleLabel, disabledLabel);
       form.appendChild(flags);
+      function syncPassword() {
+         password.required = !disabled.checked && (!user || user.disabled);
+         password.disabled = disabled.checked;
+      }
+      disabled.addEventListener("change", syncPassword);
+      syncPassword();
 
       form.appendChild(element("h3", { text: "Roles" }));
       var roles = element("div", { className: "identity-role-grid" });
@@ -177,7 +205,7 @@
       form.appendChild(roles);
 
       var actions = element("div", { className: "identity-actions" });
-      actions.appendChild(button(user ? "Save User" : "Create User", "", function () {
+      actions.appendChild(submitButton(form, user ? "Save User" : "Create User", function () {
          post(collect(form, "save-user")).then(function (payload) {
             state = normalizeState(payload);
             render();
@@ -233,12 +261,19 @@
       return card;
    }
 
-   function showUserForm(user) {
+   function focusEditor() {
+      var editor = document.getElementById("identity-editor");
+      editor.querySelector("input:not([readonly]):not(:disabled)").focus({ preventScroll: true });
+      editor.scrollIntoView({ block: "start" });
+   }
+
+   function showUserForm(user, focus) {
       var editor = document.getElementById("identity-editor");
       editor.replaceChildren(
          element("h2", { text: user ? "Edit User" : "New User" }),
          userForm(user)
       );
+      if (focus) focusEditor();
    }
 
    function showRoleForm(role) {
@@ -256,7 +291,7 @@
          field("Description", description)
       );
       var actions = element("div", { className: "identity-actions" });
-      actions.appendChild(button(role ? "Save Role" : "Create Role", "", function () {
+      actions.appendChild(submitButton(form, role ? "Save Role" : "Create Role", function () {
          post(collect(form, "save-role")).then(function (payload) {
             state = normalizeState(payload);
             render();
@@ -270,6 +305,7 @@
          element("h2", { text: role ? "Edit Role" : "New Role" }),
          form
       );
+      focusEditor();
    }
 
    function cmsAdminPanel() {
@@ -295,8 +331,7 @@
             field("Password", bootstrapPassword)
          );
          var bootstrapActions = element("div", { className: "identity-actions" });
-         bootstrapActions.appendChild(button("Create and Enable", "", function () {
-            if (!bootstrapForm.reportValidity()) return;
+         bootstrapActions.appendChild(submitButton(bootstrapForm, "Create and Enable", function () {
             post(collect(bootstrapForm, "bootstrap-cms-admin")).then(function () {
                window.location.assign("../../");
             }).catch(function (error) {
@@ -316,10 +351,8 @@
       var actions = element("div", { className: "identity-actions" });
       actions.appendChild(button("Reset All Users", "danger", function () {
          if (!window.confirm("Remove every user and disable authentication?")) return;
-         post({ action: "reset-identity" }).then(function (payload) {
-            state = normalizeState(payload);
-            render();
-            setMessage("Identity data reset. CMS administration is unprotected.", false);
+         post({ action: "reset-identity" }).then(function () {
+            window.location.reload();
          }).catch(function (error) {
             setMessage(error.message, true);
          });
@@ -335,10 +368,11 @@
          id: "identity-message",
          className: "identity-message"
       }));
+      toolbar.firstChild.setAttribute("role", "status");
       var toolbarActions = element("div", { className: "identity-actions" });
       if (state.users.length) {
          add(toolbarActions,
-            button("New User", "", function () { showUserForm(null); }),
+            button("New User", "", function () { showUserForm(null, true); }),
             button("New Role", "secondary", function () { showRoleForm(null); })
          );
       }
@@ -368,7 +402,7 @@
             })
          );
          card.appendChild(button("Edit", "secondary", function () {
-            showUserForm(user);
+            showUserForm(user, true);
          }));
          users.appendChild(card);
       });

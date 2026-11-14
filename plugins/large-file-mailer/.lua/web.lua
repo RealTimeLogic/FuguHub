@@ -1,4 +1,5 @@
 local M = {}
+local publicError = app.appreq "publicerror"
 
 local function serveFile(env, ctx, path, contentType)
    local file, err = ctx.io:open(path, "rb")
@@ -17,33 +18,25 @@ local function html(value)
       gsub(">", "&gt;"):gsub('"', "&quot;"):gsub("'", "&#39;")
 end
 
-local function publicError(value)
-   local message = tostring(value or "Request failed")
-   while true do
-      local cleaned = message:match("^.-%.lua:%d+:%s*(.*)$")
-      if not cleaned or cleaned == message then return message end
-      message = cleaned
-   end
-end
-
 local function loginResponse(pluginApp, env, authinfo)
    authinfo = authinfo or {}
    env.response:setcontenttype("text/html; charset=utf-8")
    env.response:setheader("cache-control", "no-store")
-   env.response:write("<!doctype html><html><head><meta charset='utf-8'>",
+   env.response:write("<!doctype html><html lang='en'><head><meta charset='utf-8'>",
       "<meta name='viewport' content='width=device-width,initial-scale=1'>",
       "<title>Mailer Login</title><link rel='stylesheet' href='",
       pluginApp.url("/mailer/app.css"), "'><script src='/rtl/jquery.js'></script>",
       "<script src='/rtl/sha1.js'></script></head><body><main class='mailer-login'>",
       "<section><h1>Large File Mailer</h1>")
    if authinfo.username then
-      env.response:write("<p class='error'>Login failed for ", html(authinfo.username), ".</p>")
+      env.response:write("<p class='error' id='mailer-login-error' role='alert'>Login failed for ", html(authinfo.username), ".</p>")
    end
-   env.response:write("<form method='post'><label>Username<input name='ba_username' required autofocus></label>",
-      "<label>Password<input name='ba_password' type='password' required></label>",
+   env.response:write("<form method='post'><label>Username<input name='ba_username' autocomplete='username' value='",
+      html(authinfo.username), "' required autofocus", authinfo.username and " aria-describedby='mailer-login-error'" or "", "></label>",
+      "<label>Password<input name='ba_password' type='password' autocomplete='current-password' required></label>",
       "<input type='hidden' name='ba_seed' value='", html(authinfo.seed), "'>",
       "<input type='hidden' name='ba_seedkey' value='", html(authinfo.seedkey), "'>",
-      "<button type='button' id='ba_loginbut'>Login</button></form></section></main></body></html>")
+      "<button type='submit' id='ba_loginbut'>Login</button></form></section></main></body></html>")
    return true
 end
 
@@ -133,13 +126,13 @@ local function shell(env, pluginApp, identity, view)
    local cmsAdmin = hasRole(identity, env, "cms-admin")
    env.response:setcontenttype("text/html; charset=utf-8")
    env.response:setheader("cache-control", "no-store")
-   env.response:write("<!doctype html><html><head><meta charset='utf-8'>",
+   env.response:write("<!doctype html><html lang='en'><head><meta charset='utf-8'>",
       "<meta name='viewport' content='width=device-width,initial-scale=1'>",
       "<title>Large File Mailer</title><link rel='stylesheet' href='",
-      pluginApp.url("/mailer/app.css"), "'></head><body><div class='mailer-app' data-view='",
+      pluginApp.url("/mailer/app.css?v=20261114"), "'></head><body><div class='mailer-app' data-view='",
       view, "' data-csrf='", session.mailerCsrf, "' data-settings-url='",
       cmsAdmin and pluginApp.url("/admin/plugins/large-file-mailer/") or "",
-      "'><header><strong>Large File Mailer</strong>",
+      "'><a class='skip-link' href='#mailer-client'>Skip to main content</a><header><strong>Large File Mailer</strong>",
       "<nav class='mailer-tabs'>")
    if cmsAdmin then
       env.response:write("<a href='",
@@ -154,8 +147,8 @@ local function shell(env, pluginApp, identity, view)
       tab(env, pluginApp, "templates", view, "Templates")
       tab(env, pluginApp, "jobs", view, "Jobs")
    end
-   env.response:write("</nav></header><main id='mailer-client'>Loading...</main></div>",
-      "<script src='", pluginApp.url("/mailer/app.js"), "' defer></script></body></html>")
+   env.response:write("</nav></header><main id='mailer-client' tabindex='-1'>Loading...</main></div>",
+      "<script src='", pluginApp.url("/mailer/app.js?v=20261114"), "' defer></script></body></html>")
    return true
 end
 
@@ -232,6 +225,7 @@ local function apiState(mailer, identity, env, query, page, scope, listId,
       result.contacts = mailer.contacts("", 1, 1)
       result.contacts.items = {}
       result.lists = mailer.lists(false)
+      result.templates = mailer.templates(false)
       result.confirmation = mailer.confirmationStats()
     elseif scope == "jobs" then
        result.history = manager and mailer.history(1, 100) or nil

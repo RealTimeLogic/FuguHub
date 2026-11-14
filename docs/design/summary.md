@@ -130,6 +130,11 @@ Core data is in `data/cms.sqlite.db`. All runtime writes use
 the exclusive write owner. Reads use short-lived connections and bounded
 runtime caches.
 
+The writer bounds SQLite lock waits and pre-commit job lifetime, cancels expired
+jobs, and rejects work after close. A failed commit is rolled back before the
+next job; failed rollback or ownership recovery disables the writer. See the
+[SQLite API](../FuguHub-API.md#sqlite-api) for timing and lifecycle details.
+
 `app.invalidateRuntime()` clears published-content, redirect, menu, taxonomy,
 page-table, and parsed-LSP state and advances the presentation revision used by
 ETags. Every mutation that changes public output must invoke this hook after a
@@ -191,6 +196,13 @@ registration helpers for native VFS mounts, admin entries, APIs, services, and
 cleanup. Plugin modules use `pluginreq`; mutable state stays under
 `data/plugins/<id>/`. Do not add a plugin wildcard to the CMS router or expose
 plugin-private modules through global `require`.
+
+The Large File Mailer keeps settings validation, persistence, and SMTP secrets
+in `plugins/large-file-mailer/.lua/settings.lua`; contact, CSV, and list operations
+live in `contacts.lua`. These private modules share stateless helpers in
+`util.lua`. The service composes their existing public methods and owns delivery
+scheduling and public recipient workflows. Settings replace the service's
+in-memory snapshot only after a successful save.
 
 ## Validation
 
